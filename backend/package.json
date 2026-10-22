@@ -1,0 +1,33 @@
+{
+  "name": "autoquiz-pro-backend",
+  "version": "1.0.0",
+  "description": "AutoQuiz Pro REST API backend with Express, Supabase, and Gemini",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "keywords": [
+    "autoquiz",
+    "express",
+    "supabase",
+    "gemini",
+    "edtech"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@supabase/supabase-js": "^2.49.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "morgan": "^1.10.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}

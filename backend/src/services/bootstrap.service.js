@@ -15,7 +15,16 @@ export const runSystemBootstrap = async () => {
     `);
     log.push('Universities verified (PTUT & Global EDU).');
 
-    // 2. Ensure Assessments Table Exists
+    // 2. Ensure Schema Compatibility
+    await query(`
+      ALTER TABLE public.users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT TRUE;
+      ALTER TABLE public.users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+      ALTER TABLE public.users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(20) DEFAULT 'email';
+      ALTER TABLE public.users ADD COLUMN IF NOT EXISTS university_id INTEGER;
+      ALTER TABLE public.invitations ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+    `);
+
+    // Ensure Assessments Table Exists
     await query(`
       CREATE TABLE IF NOT EXISTS public.assessments (
         assessment_id BIGSERIAL PRIMARY KEY,
@@ -41,10 +50,10 @@ export const runSystemBootstrap = async () => {
 
     // 4. Seed or Update PTUT Administrator
     const adminRes = await query(`
-      INSERT INTO public.users (name, email, password_hash, role, is_active, university_id, auth_provider, email_verified, created_at, updated_at)
-      VALUES ('PTUT System Administrator', 'admin@ptut.edu.pk', $1, 'ADMIN', TRUE, 1, 'email', TRUE, NOW(), NOW())
+      INSERT INTO public.users (name, email, password_hash, role, is_active, university_id, auth_provider, email_verified)
+      VALUES ('PTUT System Administrator', 'admin@ptut.edu.pk', $1, 'ADMIN', TRUE, 1, 'email', TRUE)
       ON CONFLICT (email) DO UPDATE 
-      SET password_hash = $1, role = 'ADMIN', is_active = TRUE, university_id = 1, email_verified = TRUE, updated_at = NOW()
+      SET password_hash = $1, role = 'ADMIN', is_active = TRUE, university_id = 1, email_verified = TRUE
       RETURNING user_id, name, email, role
     `, [adminPasswordHash]);
     const adminUser = adminRes.rows[0];
@@ -52,10 +61,10 @@ export const runSystemBootstrap = async () => {
 
     // 5. Seed or Update Faculty Teacher
     const teacherRes = await query(`
-      INSERT INTO public.users (name, email, password_hash, role, is_active, university_id, auth_provider, email_verified, created_at, updated_at)
-      VALUES ('Prof. Dr. Tariq Mahmood', 'teacher@ptut.edu.pk', $1, 'TEACHER', TRUE, 1, 'email', TRUE, NOW(), NOW())
+      INSERT INTO public.users (name, email, password_hash, role, is_active, university_id, auth_provider, email_verified)
+      VALUES ('Prof. Dr. Tariq Mahmood', 'teacher@ptut.edu.pk', $1, 'TEACHER', TRUE, 1, 'email', TRUE)
       ON CONFLICT (email) DO UPDATE 
-      SET password_hash = $1, role = 'TEACHER', is_active = TRUE, university_id = 1, email_verified = TRUE, updated_at = NOW()
+      SET password_hash = $1, role = 'TEACHER', is_active = TRUE, university_id = 1, email_verified = TRUE
       RETURNING user_id, name, email, role
     `, [teacherPasswordHash]);
     const teacherUser = teacherRes.rows[0];
@@ -63,10 +72,10 @@ export const runSystemBootstrap = async () => {
 
     // 6. Seed or Update Student User
     const studentRes = await query(`
-      INSERT INTO public.users (name, email, password_hash, role, is_active, university_id, auth_provider, email_verified, created_at, updated_at)
-      VALUES ('Muhammad Ali', 'student@ptut.edu.pk', $1, 'STUDENT', TRUE, 1, 'email', TRUE, NOW(), NOW())
+      INSERT INTO public.users (name, email, password_hash, role, is_active, university_id, auth_provider, email_verified)
+      VALUES ('Muhammad Ali', 'student@ptut.edu.pk', $1, 'STUDENT', TRUE, 1, 'email', TRUE)
       ON CONFLICT (email) DO UPDATE 
-      SET password_hash = $1, role = 'STUDENT', is_active = TRUE, university_id = 1, email_verified = TRUE, updated_at = NOW()
+      SET password_hash = $1, role = 'STUDENT', is_active = TRUE, university_id = 1, email_verified = TRUE
       RETURNING user_id, name, email, role
     `, [studentPasswordHash]);
     const studentUser = studentRes.rows[0];
@@ -81,8 +90,8 @@ export const runSystemBootstrap = async () => {
 
     // 8. Seed Teacher Invitation Code (if not already used)
     await query(`
-      INSERT INTO public.invitations (code, role, university_id, created_by, expires_at, created_at)
-      VALUES ('TEACHER-PTUT-2026', 'TEACHER', 1, $1, NOW() + INTERVAL '365 days', NOW())
+      INSERT INTO public.invitations (code, role, university_id, created_by, expires_at)
+      VALUES ('TEACHER-PTUT-2026', 'TEACHER', 1, $1, NOW() + INTERVAL '365 days')
       ON CONFLICT (code) DO NOTHING
     `, [adminUser.user_id]);
     log.push('Invitation code TEACHER-PTUT-2026 verified.');

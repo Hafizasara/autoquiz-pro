@@ -14,7 +14,7 @@ const databaseUrl = process.env.DATABASE_URL;
 export const isSupabaseConfigured = Boolean(supabaseUrl && (supabaseAnonKey || supabaseServiceRoleKey));
 export const isDatabaseUrlConfigured = Boolean(databaseUrl);
 
-// Supabase JS Client for Auth, Database REST, & Storage (runs over HTTPS 443)
+// Supabase JS Client for Auth & Storage (runs over HTTPS 443)
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey || supabaseServiceRoleKey, {
       auth: {
@@ -34,18 +34,29 @@ export const supabaseAdmin = (isSupabaseConfigured && supabaseServiceRoleKey)
     })
   : supabase;
 
-// PostgreSQL Connection Pool (Optional TCP connection via Supabase pooler)
+// PostgreSQL Connection Pool using direct pooler connection string
 export const dbPool = isDatabaseUrlConfigured
   ? new Pool({
       connectionString: databaseUrl,
-      connectionTimeoutMillis: 3000,
-      ssl: {
-        rejectUnauthorized: false
-      }
+      connectionTimeoutMillis: 5000,
+      ssl: false // Required for Supabase pooler proxy
     })
   : null;
 
-// Health test helper: tests Supabase HTTPS API and reports status
+// Query helper with automatic client acquisition and release
+export const query = async (text, params) => {
+  if (!dbPool) {
+    throw new Error('Database pool not configured. Please check DATABASE_URL in .env');
+  }
+  const client = await dbPool.connect();
+  try {
+    return await client.query(text, params);
+  } finally {
+    client.release();
+  }
+};
+
+// Health test helper
 export const testSupabaseConnection = async () => {
   if (!supabase) {
     return { connected: false, message: 'SUPABASE_URL and SUPABASE_ANON_KEY are not configured' };
@@ -56,9 +67,20 @@ export const testSupabaseConnection = async () => {
     if (error) {
       return { connected: false, message: error.message };
     }
+
+    // Also test db pool
+    let dbStatus = 'disconnected';
+    if (dbPool) {
+      const res = await query('SELECT 1 as test');
+      if (res.rows[0]?.test === 1) {
+        dbStatus = 'connected';
+      }
+    }
+
     return {
       connected: true,
       protocol: 'HTTPS (Port 443)',
+      databasePool: dbStatus,
       endpoint: supabaseUrl,
       status: 'authenticated/ready'
     };

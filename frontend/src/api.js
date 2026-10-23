@@ -8,28 +8,122 @@ const getDefaultApiUrl = () => {
   return 'http://localhost:5000/api/v1';
 };
 
-const API_BASE_URL = getDefaultApiUrl();
+export const API_BASE_URL = getDefaultApiUrl();
+
+/**
+ * Universal API Request Handler
+ */
+const request = async (endpoint, options = {}) => {
+  const url = `${API_BASE_URL}${endpoint}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(options.headers || {})
+  };
+
+  const response = await fetch(url, {
+    ...options,
+    headers
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data.message || `Request failed with status ${response.status}`;
+    throw new Error(errorMsg);
+  }
+
+  return data;
+};
+
+// --- AUTHENTICATION API ---
 
 export const checkApiHealth = async () => {
   try {
-    const res = await fetch(`${API_BASE_URL}/health`);
-    if (!res.ok) {
-      throw new Error(`Server returned status ${res.status}`);
-    }
-    return await res.json();
-  } catch (error) {
-    return {
-      status: 'error',
-      message: error.message || 'Failed to connect to backend server'
-    };
+    return await request('/health');
+  } catch (err) {
+    return { status: 'error', message: err.message };
   }
 };
 
-export const validateInvitationCode = async (code) => {
-  const res = await fetch(`${API_BASE_URL}/auth/validate-invitation`, {
+export const loginWithEmail = async (email, password) => {
+  return await request('/auth/login', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code })
+    body: JSON.stringify({ email, password })
   });
-  return await res.json();
+};
+
+export const registerTeacher = async ({ name, email, password, inviteCode }) => {
+  return await request('/auth/register-teacher', {
+    method: 'POST',
+    body: JSON.stringify({ name, email, password, inviteCode })
+  });
+};
+
+export const registerAdmin = async ({ name, email, password, inviteCode }) => {
+  return await request('/auth/register-admin', {
+    method: 'POST',
+    body: JSON.stringify({ name, email, password, inviteCode })
+  });
+};
+
+export const syncGoogleAuth = async (supabaseAccessToken, inviteCode = null) => {
+  return await request('/auth/google-auth', {
+    method: 'POST',
+    body: JSON.stringify({ supabaseAccessToken, inviteCode })
+  });
+};
+
+export const validateInviteCode = async (code, requiredRole = null) => {
+  return await request('/auth/validate-invite', {
+    method: 'POST',
+    body: JSON.stringify({ code, requiredRole })
+  });
+};
+
+export const checkUniversityEmail = async (email) => {
+  return await request('/auth/check-university-email', {
+    method: 'POST',
+    body: JSON.stringify({ email })
+  });
+};
+
+export const fetchCurrentUser = async (token) => {
+  return await request('/auth/me', {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+// --- ADMIN API ---
+
+export const fetchAdminStats = async (token) => {
+  return await request('/admin/stats', {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const fetchInvitations = async (token) => {
+  return await request('/admin/invitations', {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const createInvitation = async (token, { role, expiresInDays }) => {
+  return await request('/admin/invitations', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ role, expiresInDays })
+  });
+};
+
+export const revokeInvitation = async (token, invitationId) => {
+  return await request(`/admin/invitations/${invitationId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const fetchAdminUsers = async (token) => {
+  return await request('/admin/users', {
+    headers: { Authorization: `Bearer ${token}` }
+  });
 };

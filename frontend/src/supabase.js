@@ -1,29 +1,47 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://kzfhpwyliikdrvifwdoi.supabase.co';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_VZmyzFDEd_NVBabMiRHqiw_sEKiPNo1';
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 
 export const supabase = isSupabaseConfigured
-  ? createClient(supabaseUrl, supabaseAnonKey)
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true
+      }
+    })
   : null;
 
-// Helper function to sign in with Google OAuth
+/**
+ * Trigger Google OAuth Sign-In
+ * Redirects to /auth/callback to exchange tokens and verify roles with backend
+ */
 export const signInWithGoogle = async () => {
   if (!supabase) {
-    throw new Error('Supabase client is not configured yet. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in frontend/.env');
+    throw new Error('Supabase client is not configured.');
   }
-  return await supabase.auth.signInWithOAuth({
+
+  const redirectUrl = `${window.location.origin}/auth/callback`;
+
+  const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: `${window.location.origin}`
+      redirectTo: redirectUrl,
+      queryParams: {
+        access_type: 'offline',
+        prompt: 'select_account'
+      }
     }
   });
+
+  if (error) throw error;
+  return data;
 };
 
-// Helper function for user sign out
-export const signOut = async () => {
+export const signOutSupabase = async () => {
   if (!supabase) return;
-  return await supabase.auth.signOut();
+  await supabase.auth.signOut();
 };

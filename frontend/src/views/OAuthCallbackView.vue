@@ -179,13 +179,18 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2rem 1.5rem;
+  padding: 2.5rem 1.5rem;
+  background-color: var(--bg-page);
 }
 
 .callback-card {
   width: 100%;
   max-width: 500px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-lg);
   padding: 2.5rem 2rem;
+  box-shadow: var(--shadow-md);
 }
 
 .state-box {
@@ -199,7 +204,7 @@ onMounted(async () => {
 .spinner {
   width: 44px;
   height: 44px;
-  border: 3px solid rgba(255, 255, 255, 0.1);
+  border: 3px solid var(--bg-hover);
   border-top-color: var(--accent-primary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -224,13 +229,15 @@ onMounted(async () => {
 }
 
 .icon-indigo {
-  background: rgba(99, 102, 241, 0.15);
-  color: #818cf8;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-sky);
+  color: var(--accent-deep);
 }
 
 .icon-danger {
-  background: rgba(244, 63, 94, 0.15);
-  color: #fb7185;
+  background: var(--bg-error);
+  border: 1px solid var(--border-error);
+  color: var(--color-error);
 }
 
 .state-title {
@@ -241,18 +248,18 @@ onMounted(async () => {
 }
 
 .state-text {
-  font-size: 0.9rem;
-  color: var(--text-muted);
+  font-size: 0.92rem;
+  color: var(--text-secondary);
   line-height: 1.5;
 }
 
 .notice-box {
   text-align: left;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-md);
   padding: 1rem;
-  font-size: 0.82rem;
+  font-size: 0.85rem;
   width: 100%;
 }
 
@@ -264,14 +271,15 @@ onMounted(async () => {
 
 .notice-list {
   padding-left: 1.2rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
 }
 
 .notice-list code {
-  color: var(--accent-cyan);
+  color: var(--accent-deep);
+  font-weight: 700;
 }
 
 .invite-form {
@@ -296,22 +304,34 @@ onMounted(async () => {
 
 .form-input {
   width: 100%;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid var(--border-color);
-  padding: 0.8rem 1rem;
-  border-radius: var(--radius-sm);
+  background-color: #FFFFFF;
+  border: 1px solid var(--border-light);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
   color: var(--text-main);
-  font-size: 0.95rem;
+  font-size: 0.92rem;
+  outline: none;
+  transition: var(--transition-fast);
+}
+
+.form-input:hover {
+  border-color: var(--border-sky);
+}
+
+.form-input:focus {
+  border-color: var(--border-focus);
+  box-shadow: var(--focus-ring);
 }
 
 .code-input {
   font-family: monospace;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  font-weight: 700;
 }
 
 .error-text {
-  color: #fb7185;
+  color: var(--color-error);
   font-size: 0.85rem;
 }
 

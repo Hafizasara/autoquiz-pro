@@ -186,6 +186,7 @@ const handleGoogleSignIn = async () => {
   align-items: center;
   justify-content: center;
   padding: 2.5rem 1.5rem;
+  background-color: var(--bg-page);
 }
 
 .auth-container {
@@ -208,12 +209,12 @@ const handleGoogleSignIn = async () => {
   width: 54px;
   height: 54px;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-vivid));
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
-  box-shadow: var(--glow-indigo);
+  color: #FFFFFF;
+  box-shadow: 0 4px 14px rgba(56, 189, 248, 0.35);
   margin-bottom: 0.25rem;
 }
 
@@ -227,18 +228,21 @@ const handleGoogleSignIn = async () => {
   font-size: 1.85rem;
   font-weight: 800;
   letter-spacing: -0.02em;
-  background: linear-gradient(135deg, #ffffff 40%, #a5b4fc 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--text-main);
 }
 
 .app-subtitle {
   font-size: 0.9rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
+  font-weight: 500;
 }
 
 .auth-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-lg);
   padding: 2.25rem;
+  box-shadow: var(--shadow-md);
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
@@ -248,18 +252,19 @@ const handleGoogleSignIn = async () => {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  text-align: center;
 }
 
 .card-heading {
   font-family: var(--font-heading);
-  font-size: 1.35rem;
+  font-size: 1.4rem;
   font-weight: 700;
   color: var(--text-main);
 }
 
 .card-subtext {
   font-size: 0.88rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .form-body {
@@ -287,51 +292,64 @@ const handleGoogleSignIn = async () => {
 }
 
 .btn-link {
-  font-size: 0.8rem;
-  color: var(--accent-primary);
+  font-size: 0.82rem;
+  color: var(--accent-vivid);
   background: transparent;
+  font-weight: 600;
+}
+
+.btn-link:hover {
+  color: var(--accent-deep);
+  text-decoration: underline;
 }
 
 .form-input {
   width: 100%;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid var(--border-color);
-  padding: 0.8rem 1rem;
-  border-radius: var(--radius-sm);
+  background-color: #FFFFFF;
+  border: 1px solid var(--border-light);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
   color: var(--text-main);
   font-size: 0.92rem;
   outline: none;
-  transition: var(--transition);
+  transition: var(--transition-fast);
+}
+
+.form-input:hover {
+  border-color: var(--border-sky);
 }
 
 .form-input:focus {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+  border-color: var(--border-focus);
+  box-shadow: var(--focus-ring);
 }
 
 .btn-block {
   width: 100%;
   justify-content: center;
-  padding: 0.95rem;
+  padding: 0.85rem;
 }
 
 .btn-google {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: #FFFFFF;
+  border: 1px solid var(--border-light);
   color: var(--text-main);
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.8rem;
-  padding: 0.95rem 1.25rem;
+  padding: 0.85rem 1.25rem;
   font-weight: 600;
-  font-size: 0.95rem;
-  border-radius: var(--radius-sm);
+  font-size: 0.92rem;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  transition: var(--transition-fast);
 }
 
 .btn-google:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.25);
+  background: var(--bg-hover);
+  border-color: var(--border-sky);
+  color: var(--accent-vivid);
 }
 
 .google-svg {
@@ -343,14 +361,15 @@ const handleGoogleSignIn = async () => {
   display: flex;
   align-items: center;
   text-align: center;
-  color: var(--text-dim);
+  color: var(--text-secondary);
   font-size: 0.75rem;
+  font-weight: 600;
 }
 
 .divider::before, .divider::after {
   content: '';
   flex: 1;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-light);
 }
 
 .divider span {
@@ -362,59 +381,47 @@ const handleGoogleSignIn = async () => {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  font-size: 0.85rem;
-  color: var(--text-muted);
-  border-top: 1px solid var(--border-color);
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border-light);
   padding-top: 1.25rem;
 }
 
 .link-bold {
-  color: var(--accent-primary);
+  color: var(--accent-vivid);
   font-weight: 600;
 }
 
-.alert {
-  padding: 0.85rem 1.15rem;
-  border-radius: var(--radius-sm);
-  font-size: 0.85rem;
-}
-
-.alert-error {
-  background: rgba(244, 63, 94, 0.12);
-  border: 1px solid rgba(244, 63, 94, 0.3);
-  color: #fb7185;
-}
-
-.alert-success {
-  background: rgba(16, 185, 129, 0.12);
-  border: 1px solid rgba(16, 185, 129, 0.3);
-  color: #34d399;
-}
-
-.alert-warning {
-  background: rgba(245, 158, 11, 0.12);
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  color: #fbbf24;
+.link-bold:hover {
+  color: var(--accent-deep);
+  text-decoration: underline;
 }
 
 .preview-verify-box {
   margin-top: 0.75rem;
-  background: rgba(0, 0, 0, 0.3);
-  padding: 0.6rem 0.85rem;
-  border-radius: 4px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-sky);
+  padding: 0.65rem 0.85rem;
+  border-radius: var(--radius-sm);
 }
 
 .preview-label {
   display: block;
   font-size: 0.75rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 .preview-link {
-  color: var(--accent-cyan);
+  color: var(--accent-vivid);
   font-weight: 600;
   font-size: 0.85rem;
   word-break: break-all;
+}
+
+.preview-link:hover {
+  color: var(--accent-deep);
+  text-decoration: underline;
 }
 
 .font-bold {
@@ -423,22 +430,23 @@ const handleGoogleSignIn = async () => {
 
 .footer-institutional {
   text-align: center;
-  font-size: 0.78rem;
-  color: var(--text-muted);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.4rem;
+  gap: 0.45rem;
   margin-top: 0.25rem;
 }
 
 .link-institutional {
-  color: #818cf8;
+  color: var(--accent-vivid);
   font-weight: 600;
   text-decoration: none;
 }
 
 .link-institutional:hover {
+  color: var(--accent-deep);
   text-decoration: underline;
 }
 </style>

@@ -80,13 +80,18 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2rem 1.5rem;
+  padding: 2.5rem 1.5rem;
+  background-color: var(--bg-page);
 }
 
 .verify-card {
   width: 100%;
   max-width: 480px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-lg);
   padding: 2.75rem 2.25rem;
+  box-shadow: var(--shadow-md);
 }
 
 .state-box {
@@ -100,7 +105,7 @@ onMounted(async () => {
 .spinner {
   width: 44px;
   height: 44px;
-  border: 3px solid rgba(255, 255, 255, 0.1);
+  border: 3px solid var(--bg-hover);
   border-top-color: var(--accent-primary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -125,13 +130,15 @@ onMounted(async () => {
 }
 
 .icon-success {
-  background: rgba(16, 185, 129, 0.15);
-  color: #34d399;
+  background: var(--bg-success);
+  border: 1px solid var(--border-success);
+  color: var(--color-success);
 }
 
 .icon-danger {
-  background: rgba(244, 63, 94, 0.15);
-  color: #fb7185;
+  background: var(--bg-error);
+  border: 1px solid var(--border-error);
+  color: var(--color-error);
 }
 
 .state-title {
@@ -143,22 +150,23 @@ onMounted(async () => {
 
 .state-text {
   font-size: 0.92rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   line-height: 1.5;
 }
 
 .note-box {
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--border-color);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-sky);
   padding: 0.85rem 1rem;
-  border-radius: var(--radius-sm);
-  font-size: 0.82rem;
-  color: #a5b4fc;
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  color: var(--accent-deep);
+  line-height: 1.45;
 }
 
 .btn-block {
   width: 100%;
   justify-content: center;
-  padding: 0.9rem;
+  padding: 0.85rem;
 }
 </style>

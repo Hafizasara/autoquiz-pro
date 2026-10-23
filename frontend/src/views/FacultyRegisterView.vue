@@ -224,9 +224,7 @@ const handleFacultyRegister = async () => {
   align-items: center;
   justify-content: center;
   padding: 3rem 1.5rem;
-  background: radial-gradient(circle at 50% 20%, rgba(99, 102, 241, 0.12) 0%, transparent 60%),
-              radial-gradient(circle at 80% 80%, rgba(139, 92, 246, 0.08) 0%, transparent 50%),
-              var(--bg-primary);
+  background-color: var(--bg-page);
 }
 
 .auth-container {
@@ -249,12 +247,12 @@ const handleFacultyRegister = async () => {
   width: 58px;
   height: 58px;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-vivid));
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
-  box-shadow: 0 0 25px rgba(99, 102, 241, 0.45);
+  color: #FFFFFF;
+  box-shadow: 0 4px 14px rgba(56, 189, 248, 0.35);
 }
 
 .brand-svg {
@@ -265,24 +263,24 @@ const handleFacultyRegister = async () => {
 .badge-institutional {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.3rem 0.75rem;
-  font-size: 0.72rem;
+  gap: 0.45rem;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.74rem;
   font-weight: 800;
   letter-spacing: 0.08em;
-  border-radius: 9999px;
-  background: rgba(99, 102, 241, 0.15);
-  color: #c7d2fe;
-  border: 1px solid rgba(165, 180, 252, 0.3);
+  border-radius: var(--radius-full);
+  background: var(--bg-hover);
+  color: var(--accent-deep);
+  border: 1px solid var(--border-sky);
   text-transform: uppercase;
 }
 
 .badge-dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: #38bdf8;
-  box-shadow: 0 0 8px #38bdf8;
+  background: var(--accent-vivid);
+  box-shadow: 0 0 6px var(--accent-primary);
 }
 
 .app-title {
@@ -290,24 +288,24 @@ const handleFacultyRegister = async () => {
   font-size: 1.95rem;
   font-weight: 800;
   letter-spacing: -0.02em;
-  background: linear-gradient(135deg, #ffffff 40%, #c7d2fe 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--text-main);
 }
 
 .app-subtitle {
-  font-size: 0.88rem;
-  color: var(--text-muted);
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  font-weight: 500;
 }
 
 .auth-card {
-  padding: 2.25rem;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-sky);
   border-radius: var(--radius-lg);
+  padding: 2.25rem;
+  box-shadow: var(--shadow-md);
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-  border: 1px solid rgba(99, 102, 241, 0.25);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4), 0 0 25px rgba(99, 102, 241, 0.08);
 }
 
 .card-intro {
@@ -315,9 +313,10 @@ const handleFacultyRegister = async () => {
 }
 
 .card-heading {
+  font-family: var(--font-heading);
   font-size: 1.35rem;
   font-weight: 700;
-  color: var(--text-primary);
+  color: var(--text-main);
   margin-bottom: 0.35rem;
 }
 
@@ -341,8 +340,8 @@ const handleFacultyRegister = async () => {
 
 .highlight-group {
   padding: 1rem;
-  background: rgba(99, 102, 241, 0.06);
-  border: 1px solid rgba(99, 102, 241, 0.2);
+  background: var(--bg-page);
+  border: 1px solid var(--border-sky);
   border-radius: var(--radius-md);
 }
 
@@ -353,19 +352,20 @@ const handleFacultyRegister = async () => {
 }
 
 .form-label {
-  font-size: 0.82rem;
+  font-size: 0.84rem;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--text-main);
 }
 
 .required-label::after {
   content: ' *';
-  color: #f87171;
+  color: var(--color-error);
 }
 
 .validating-hint {
   font-size: 0.75rem;
-  color: #818cf8;
+  color: var(--accent-vivid);
+  font-weight: 600;
 }
 
 .input-with-validation {
@@ -387,7 +387,7 @@ const handleFacultyRegister = async () => {
   right: 0.75rem;
   display: flex;
   align-items: center;
-  color: #34d399;
+  color: var(--color-success);
 }
 
 .check-svg {
@@ -396,62 +396,68 @@ const handleFacultyRegister = async () => {
 }
 
 .code-verified-pill {
-  margin-top: 0.35rem;
-  padding: 0.45rem 0.75rem;
+  margin-top: 0.4rem;
+  padding: 0.5rem 0.85rem;
   border-radius: var(--radius-sm);
-  background: rgba(16, 185, 129, 0.12);
-  border: 1px solid rgba(52, 211, 153, 0.3);
+  background: var(--bg-success);
+  border: 1px solid var(--border-success);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
 }
 
 .uni-name {
-  color: #a7f3d0;
-  font-weight: 600;
+  color: var(--color-success);
+  font-weight: 700;
 }
 
 .role-badge {
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  padding: 0.15rem 0.5rem;
+  padding: 0.2rem 0.6rem;
   border-radius: 4px;
-  background: rgba(59, 130, 246, 0.2);
-  color: #93c5fd;
+  background: var(--bg-hover);
+  color: var(--accent-deep);
+  border: 1px solid var(--border-sky);
   text-transform: uppercase;
 }
 
 .role-badge.admin {
-  background: rgba(168, 85, 247, 0.25);
-  color: #e9d5ff;
+  background: #EFF6FF;
+  color: #1D4ED8;
+  border: 1px solid #BFDBFE;
 }
 
 .input-hint {
   font-size: 0.75rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   line-height: 1.35;
 }
 
 .form-input {
   width: 100%;
-  padding: 0.75rem 0.95rem;
+  padding: 0.75rem 1rem;
   border-radius: var(--radius-md);
-  background: rgba(15, 23, 42, 0.6);
-  border: 1px solid var(--border-color);
-  color: var(--text-primary);
-  font-size: 0.9rem;
+  background-color: #FFFFFF;
+  border: 1px solid var(--border-light);
+  color: var(--text-main);
+  font-size: 0.92rem;
   outline: none;
   transition: var(--transition-fast);
 }
 
+.form-input:hover {
+  border-color: var(--border-sky);
+}
+
 .form-input:focus {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+  border-color: var(--border-focus);
+  box-shadow: var(--focus-ring);
 }
 
 .btn-lg {
-  padding: 0.9rem 1.25rem;
+  padding: 0.85rem 1.25rem;
   font-size: 0.95rem;
   font-weight: 700;
   margin-top: 0.5rem;
@@ -460,44 +466,16 @@ const handleFacultyRegister = async () => {
 .btn-link {
   background: none;
   border: none;
-  color: var(--accent-primary);
-  font-size: 0.8rem;
+  color: var(--accent-vivid);
+  font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
   padding: 0;
 }
 
 .btn-link:hover {
+  color: var(--accent-deep);
   text-decoration: underline;
-}
-
-.alert {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.65rem;
-  padding: 0.85rem 1rem;
-  border-radius: var(--radius-md);
-  font-size: 0.85rem;
-  line-height: 1.4;
-}
-
-.alert-icon {
-  width: 18px;
-  height: 18px;
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-.alert-error {
-  background: rgba(239, 68, 68, 0.12);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  color: #fca5a5;
-}
-
-.alert-success {
-  background: rgba(16, 185, 129, 0.12);
-  border: 1px solid rgba(16, 185, 129, 0.3);
-  color: #86efac;
 }
 
 .card-footer {
@@ -508,24 +486,25 @@ const handleFacultyRegister = async () => {
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--border-color);
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-light);
 }
 
 .link-bold {
-  color: var(--accent-primary);
+  color: var(--accent-vivid);
   font-weight: 600;
   text-decoration: none;
 }
 
 .link-bold:hover {
+  color: var(--accent-deep);
   text-decoration: underline;
 }
 
 .private-footer {
   text-align: center;
-  font-size: 0.78rem;
-  color: var(--text-muted);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
@@ -533,12 +512,13 @@ const handleFacultyRegister = async () => {
 }
 
 .link-subtle {
-  color: #818cf8;
+  color: var(--accent-vivid);
   text-decoration: none;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .link-subtle:hover {
+  color: var(--accent-deep);
   text-decoration: underline;
 }
 </style>

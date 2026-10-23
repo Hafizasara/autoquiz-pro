@@ -851,6 +851,7 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
   flex-direction: column;
   gap: 2rem;
   min-height: 100vh;
+  background-color: var(--bg-page);
 }
 
 .navbar {
@@ -860,6 +861,10 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
   flex-wrap: wrap;
   gap: 1.5rem;
   padding: 1.25rem 2rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 .nav-brand {
@@ -871,12 +876,13 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 .logo-box {
   width: 44px;
   height: 44px;
-  border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-vivid));
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
+  color: #FFFFFF;
+  box-shadow: 0 4px 12px rgba(56, 189, 248, 0.35);
 }
 
 .logo-box svg {
@@ -892,8 +898,8 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 }
 
 .nav-subtitle {
-  font-size: 0.8rem;
-  color: var(--text-muted);
+  font-size: 0.82rem;
+  color: var(--text-secondary);
 }
 
 .nav-user {
@@ -910,24 +916,14 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 }
 
 .user-name {
-  font-size: 0.9rem;
+  font-size: 0.92rem;
   font-weight: 600;
   color: var(--text-main);
 }
 
 .user-email {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-}
-
-.btn-sm {
-  padding: 0.45rem 0.9rem;
-  font-size: 0.82rem;
-}
-
-.btn-xs {
-  padding: 0.35rem 0.75rem;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
 }
 
 .role-view {
@@ -941,7 +937,11 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-sky);
   border-left: 4px solid var(--accent-primary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 .banner-title {
@@ -953,13 +953,14 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 
 .banner-text {
   font-size: 0.95rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   max-width: 750px;
   line-height: 1.6;
 }
 
 .banner-text code {
-  color: var(--accent-cyan);
+  color: var(--accent-deep);
+  font-weight: 700;
 }
 
 /* Empty Dashboard State for Teachers with 0 assigned courses */
@@ -970,15 +971,19 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
   align-items: center;
   text-align: center;
   gap: 1.25rem;
-  border: 1px dashed var(--border-color);
+  background: var(--bg-card);
+  border: 2px dashed var(--border-sky);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 .empty-icon-circle {
   width: 72px;
   height: 72px;
   border-radius: 50%;
-  background: rgba(245, 158, 11, 0.12);
-  color: #fbbf24;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-sky);
+  color: var(--accent-vivid);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -998,15 +1003,15 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 
 .empty-desc {
   font-size: 0.95rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   max-width: 600px;
   line-height: 1.6;
 }
 
 .empty-notice-box {
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-md);
   padding: 1.25rem;
   max-width: 580px;
   text-align: left;
@@ -1014,14 +1019,14 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 
 .empty-notice-title {
   font-weight: 700;
-  font-size: 0.9rem;
+  font-size: 0.92rem;
   color: var(--text-main);
   margin-bottom: 0.4rem;
 }
 
 .empty-notice-text {
-  font-size: 0.85rem;
-  color: var(--text-muted);
+  font-size: 0.88rem;
+  color: var(--text-secondary);
   line-height: 1.5;
 }
 
@@ -1043,6 +1048,16 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  transition: var(--transition-fast);
+}
+
+.course-card:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-focus);
 }
 
 .course-header {
@@ -1053,8 +1068,9 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 
 .course-badge {
   font-family: monospace;
-  background: rgba(99, 102, 241, 0.15);
-  color: #a5b4fc;
+  background: var(--bg-hover);
+  color: var(--accent-deep);
+  border: 1px solid var(--border-sky);
   padding: 0.2rem 0.6rem;
   border-radius: 4px;
   font-size: 0.8rem;
@@ -1062,19 +1078,21 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 }
 
 .student-count {
-  font-size: 0.8rem;
-  color: var(--accent-cyan);
+  font-size: 0.82rem;
+  color: var(--accent-deep);
+  font-weight: 600;
 }
 
 .course-name {
   font-family: var(--font-heading);
   font-size: 1.15rem;
   font-weight: 700;
+  color: var(--text-main);
 }
 
 .course-meta {
-  font-size: 0.8rem;
-  color: var(--text-muted);
+  font-size: 0.82rem;
+  color: var(--text-secondary);
 }
 
 .course-actions {
@@ -1084,29 +1102,41 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
   margin-top: 0.5rem;
 }
 
-/* Admin Tabs */
+/* Admin Tabs (Normal, Hover, Active/Selected State matching rules) */
 .admin-tabs {
   display: flex;
-  gap: 0.5rem;
-  border-bottom: 1px solid var(--border-color);
-  padding-bottom: 0.5rem;
+  gap: 0.65rem;
+  border-bottom: 1px solid var(--border-light);
+  padding-bottom: 0.75rem;
   overflow-x: auto;
 }
 
 .admin-tab-btn {
-  background: transparent;
-  color: var(--text-muted);
+  background: #FFFFFF;
+  color: var(--text-main);
+  border: 1px solid var(--border-sky);
   font-size: 0.88rem;
   font-weight: 600;
   padding: 0.65rem 1.15rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   white-space: nowrap;
+  box-shadow: var(--shadow-sm);
+  transition: var(--transition-fast);
 }
 
+/* Hover state: Pale sky blue background, vivid blue border and text */
+.admin-tab-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-focus);
+  color: var(--accent-vivid);
+}
+
+/* Active/selected state: Light sky blue background with a stronger blue outline */
 .admin-tab-btn.active {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text-main);
-  border: 1px solid var(--border-color);
+  background: var(--bg-active);
+  color: var(--accent-deep);
+  border: 1px solid var(--accent-vivid);
+  font-weight: 700;
 }
 
 .tab-pane {
@@ -1116,11 +1146,47 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 }
 
 /* Course Creation & Form */
-.create-course-box {
+.create-course-box,
+.creator-card {
   padding: 1.75rem 2rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.section-title {
+  font-family: var(--font-heading);
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.section-desc {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+}
+
+.card-header-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-sky);
+  background: var(--bg-hover);
+}
+
+.badge-count {
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: #FFFFFF;
+  color: var(--accent-deep);
+  border: 1px solid var(--border-sky);
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-full);
 }
 
 .form-row {
@@ -1139,18 +1205,28 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 }
 
 .form-select, .table-select {
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid var(--border-color);
+  background-color: #FFFFFF;
+  border: 1px solid var(--border-light);
   padding: 0.65rem 0.85rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--text-main);
-  font-size: 0.85rem;
+  font-size: 0.88rem;
   outline: none;
+  transition: var(--transition-fast);
+}
+
+.form-select:hover, .table-select:hover {
+  border-color: var(--border-sky);
+}
+
+.form-select:focus, .table-select:focus {
+  border-color: var(--border-focus);
+  box-shadow: var(--focus-ring);
 }
 
 .table-select {
   padding: 0.4rem 0.6rem;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
 }
 
 /* CSV Upload */
@@ -1159,6 +1235,10 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 .csv-upload-box {
@@ -1173,9 +1253,9 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 }
 
 .csv-result-box {
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.25);
-  border-radius: var(--radius-sm);
+  background: var(--bg-success);
+  border: 1px solid var(--border-success);
+  border-radius: var(--radius-md);
   padding: 1.25rem;
   display: flex;
   flex-direction: column;
@@ -1184,7 +1264,7 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 }
 
 .result-title {
-  color: #34d399;
+  color: var(--color-success);
   font-weight: 700;
 }
 
@@ -1198,6 +1278,7 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 .invites-title {
   font-size: 0.85rem;
   font-weight: 700;
+  color: var(--text-main);
 }
 
 .invites-list {
@@ -1220,7 +1301,7 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 }
 
 .guide-title {
-  font-size: 0.9rem;
+  font-size: 0.92rem;
   font-weight: 700;
   color: var(--text-main);
 }
@@ -1232,25 +1313,30 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 }
 
 .template-card {
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
+  background: #FFFFFF;
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-md);
   padding: 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  box-shadow: var(--shadow-sm);
 }
 
 .template-tag {
-  font-size: 0.75rem;
+  font-size: 0.78rem;
   font-weight: 700;
-  color: var(--accent-cyan);
+  color: var(--accent-deep);
 }
 
 .template-card pre {
   margin: 0;
-  font-size: 0.75rem;
-  color: #a5b4fc;
+  font-size: 0.78rem;
+  color: var(--text-main);
+  background: var(--bg-page);
+  padding: 0.5rem;
+  border-radius: 4px;
+  border: 1px solid var(--border-light);
   overflow-x: auto;
 }
 
@@ -1266,32 +1352,43 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
 }
 
 .stat-number {
   font-family: var(--font-heading);
   font-size: 2rem;
   font-weight: 800;
+  color: var(--accent-deep);
 }
 
 .stat-label {
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-main);
 }
 
 .stat-hint, .stat-breakdown {
-  font-size: 0.75rem;
-  color: var(--text-muted);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
 }
 
 .stat-breakdown {
-  color: var(--accent-cyan);
+  color: var(--accent-deep);
+  font-weight: 600;
 }
 
 /* Tables */
 .table-card {
   padding: 0;
   overflow: hidden;
+  background: var(--bg-card);
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 .table-wrapper {
@@ -1302,66 +1399,60 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
   width: 100%;
   border-collapse: collapse;
   text-align: left;
-  font-size: 0.85rem;
+  font-size: 0.88rem;
 }
 
 .data-table th {
-  background: rgba(0, 0, 0, 0.35);
-  padding: 1rem 1.25rem;
-  color: var(--text-muted);
-  font-weight: 600;
-  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-hover);
+  padding: 0.95rem 1.25rem;
+  color: var(--text-main);
+  font-weight: 700;
+  border-bottom: 1px solid var(--border-sky);
 }
 
 .data-table td {
   padding: 0.85rem 1.25rem;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-light);
   color: var(--text-main);
+}
+
+.data-table tr:hover td {
+  background: var(--bg-page);
 }
 
 .code-pill {
   font-family: monospace;
-  background: rgba(0, 0, 0, 0.4);
-  padding: 0.2rem 0.5rem;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-sky);
+  padding: 0.2rem 0.55rem;
   border-radius: 4px;
-  color: var(--accent-cyan);
+  color: var(--accent-deep);
+  font-weight: 700;
 }
 
 .btn-copy-inline {
   background: transparent;
   cursor: pointer;
   margin-left: 0.4rem;
-  opacity: 0.7;
+  opacity: 0.8;
 }
 
-.role-pill {
-  font-size: 0.75rem;
-  font-weight: 700;
-  padding: 0.2rem 0.55rem;
-  border-radius: var(--radius-full);
+.btn-copy-inline:hover {
+  opacity: 1;
 }
-
-.role-admin { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
-.role-teacher { background: rgba(99, 102, 241, 0.15); color: #a5b4fc; }
-.role-student { background: rgba(16, 185, 129, 0.15); color: #34d399; }
-
-.badge-status {
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 0.2rem 0.55rem;
-  border-radius: 4px;
-}
-
-.badge-status-active { background: rgba(16, 185, 129, 0.15); color: #34d399; }
-.badge-status-used { background: rgba(100, 116, 139, 0.15); color: #94a3b8; }
 
 .btn-revoke {
-  background: rgba(244, 63, 94, 0.15);
-  border: 1px solid rgba(244, 63, 94, 0.3);
-  color: #fb7185;
+  background: var(--bg-error);
+  border: 1px solid var(--border-error);
+  color: var(--color-error);
   font-size: 0.75rem;
+  font-weight: 600;
   padding: 0.3rem 0.65rem;
   border-radius: 4px;
+}
+
+.btn-revoke:hover {
+  background: #FEE2E2;
 }
 
 .generator-card {
@@ -1369,12 +1460,16 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 .new-code-banner {
-  background: rgba(99, 102, 241, 0.12);
-  border: 1px solid rgba(99, 102, 241, 0.35);
-  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-md);
   padding: 1rem 1.25rem;
   display: flex;
   justify-content: space-between;
@@ -1385,14 +1480,15 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 
 .new-code-label {
   font-size: 0.8rem;
-  color: #a5b4fc;
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 .new-code-display {
   font-family: monospace;
   font-size: 1.35rem;
-  font-weight: 700;
-  color: #ffffff;
+  font-weight: 800;
+  color: var(--accent-deep);
 }
 
 .btn-generate {
@@ -1403,5 +1499,15 @@ Dr. Ada Lovelace,ada@uni.edu</pre>
 
 .font-bold {
   font-weight: 600;
+}
+
+.text-dim {
+  color: var(--text-secondary);
+}
+
+.provider-tag {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  text-transform: capitalize;
 }
 </style>

@@ -47,7 +47,8 @@ router.post('/upload-csv', upload.single('file'), async (req, res, next) => {
  */
 router.get('/courses', async (req, res, next) => {
   try {
-    const courses = await getUniversityCourses(req.user.university_id);
+    const uniId = req.user.university_id || 1;
+    const courses = await getUniversityCourses(uniId);
     res.status(200).json({ status: 'success', data: { courses } });
   } catch (error) {
     next(error);
@@ -61,7 +62,13 @@ router.get('/courses', async (req, res, next) => {
 router.post('/courses', async (req, res, next) => {
   try {
     const { courseName, courseCode, teacherId } = req.body;
-    const course = await createUniversityCourse(req.user.university_id, { courseName, courseCode, teacherId });
+    const uniId = req.user.university_id || 1;
+    const resolvedTeacherId = teacherId ? parseInt(teacherId, 10) : null;
+    const course = await createUniversityCourse(uniId, { 
+      courseName, 
+      courseCode, 
+      teacherId: resolvedTeacherId 
+    });
 
     res.status(201).json({
       status: 'success',
@@ -81,12 +88,14 @@ router.put('/courses/:id/assign', async (req, res, next) => {
   try {
     const { id } = req.params;
     const { teacherId } = req.body;
+    const uniId = req.user.university_id || 1;
+    const resolvedTeacherId = teacherId ? parseInt(teacherId, 10) : null;
 
-    const updated = await assignTeacherToCourse(req.user.university_id, id, teacherId);
+    const updated = await assignTeacherToCourse(uniId, id, resolvedTeacherId);
 
     res.status(200).json({
       status: 'success',
-      message: teacherId ? 'Teacher assigned to course successfully.' : 'Course unassigned.',
+      message: resolvedTeacherId ? 'Teacher assigned to course successfully.' : 'Course unassigned.',
       data: { course: updated }
     });
   } catch (error) {
@@ -100,13 +109,14 @@ router.put('/courses/:id/assign', async (req, res, next) => {
  */
 router.get('/teachers', async (req, res, next) => {
   try {
+    const uniId = req.user.university_id || 1;
     const resTeachers = await query(
       `SELECT user_id, name, email, avatar_url, created_at,
               (SELECT COUNT(*) FROM public.courses WHERE user_id = u.user_id)::int as assigned_courses_count
        FROM public.users u
-       WHERE university_id = $1 AND role = 'TEACHER' AND is_active = TRUE
+       WHERE (u.university_id = $1 OR u.university_id IS NULL) AND u.role = 'TEACHER' AND u.is_active = TRUE
        ORDER BY name ASC`,
-      [req.user.university_id]
+      [uniId]
     );
 
     res.status(200).json({
@@ -229,12 +239,13 @@ router.delete('/invitations/:id', async (req, res, next) => {
  */
 router.get('/users', async (req, res, next) => {
   try {
+    const uniId = req.user.university_id || 1;
     const result = await query(
       `SELECT user_id, name, email, role, is_active, auth_provider, avatar_url, created_at, updated_at
        FROM public.users
-       WHERE university_id = $1
+       WHERE (university_id = $1 OR university_id IS NULL)
        ORDER BY user_id DESC`,
-      [req.user.university_id]
+      [uniId]
     );
 
     res.status(200).json({
@@ -254,6 +265,7 @@ router.get('/users', async (req, res, next) => {
  */
 router.get('/stats', async (req, res, next) => {
   try {
+    const uniId = req.user.university_id || 1;
     const statsRes = await query(
       `SELECT
         COUNT(*) FILTER (WHERE role = 'ADMIN') as admin_count,
@@ -261,8 +273,8 @@ router.get('/stats', async (req, res, next) => {
         COUNT(*) FILTER (WHERE role = 'STUDENT') as student_count,
         COUNT(*) as total_users
        FROM public.users
-       WHERE university_id = $1;`,
-      [req.user.university_id]
+       WHERE (university_id = $1 OR university_id IS NULL);`,
+      [uniId]
     );
 
     const inviteStats = await query(
@@ -271,8 +283,8 @@ router.get('/stats', async (req, res, next) => {
         COUNT(*) FILTER (WHERE used_at IS NOT NULL) as used_invites,
         COUNT(*) as total_invites
        FROM public.invitations
-       WHERE university_id = $1;`,
-      [req.user.university_id]
+       WHERE (university_id = $1 OR university_id IS NULL);`,
+      [uniId]
     );
 
     const courseStats = await query(
@@ -281,8 +293,8 @@ router.get('/stats', async (req, res, next) => {
         COUNT(*) FILTER (WHERE user_id IS NOT NULL) as assigned_courses,
         COUNT(*) FILTER (WHERE user_id IS NULL) as unassigned_courses
        FROM public.courses
-       WHERE university_id = $1;`,
-      [req.user.university_id]
+       WHERE (university_id = $1 OR university_id IS NULL);`,
+      [uniId]
     );
 
     res.status(200).json({

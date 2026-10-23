@@ -179,7 +179,7 @@ const handleCreateCourse = async () => {
     await createAdminCourse(auth.token.value, {
       courseName: newCourseForm.value.courseName,
       courseCode: newCourseForm.value.courseCode,
-      teacherId: newCourseForm.value.teacherId || null
+      teacherId: newCourseForm.value.teacherId ? Number(newCourseForm.value.teacherId) : null
     });
 
     adminSuccessMessage.value = `Course "${newCourseForm.value.courseName}" created successfully!`;
@@ -510,13 +510,19 @@ onMounted(async () => {
               </div>
 
               <div class="field-item">
-                <label class="form-label">Assign Teacher (Optional)</label>
+                <label class="form-label">Assign Registered Teacher</label>
                 <select v-model="newCourseForm.teacherId" class="form-select">
-                  <option value="">-- Leave Unassigned --</option>
+                  <option value="">-- Select Registered Teacher (or Leave Unassigned) --</option>
                   <option v-for="t in teachersList" :key="t.user_id" :value="t.user_id">
                     {{ t.name }} ({{ t.email }})
                   </option>
                 </select>
+                <span v-if="teachersList.length" class="field-hint text-success">
+                  {{ teachersList.length }} registered faculty teacher(s) available
+                </span>
+                <span v-else class="field-hint text-warning">
+                  No teachers registered yet. Generate an invitation code to onboard faculty.
+                </span>
               </div>
 
               <button type="submit" class="btn btn-primary btn-generate" :disabled="isCreatingCourse">
@@ -539,12 +545,21 @@ onMounted(async () => {
                   </tr>
                 </thead>
                 <tbody>
+                  <tr v-if="coursesList.length === 0">
+                    <td colspan="5" class="text-center empty-table-td">
+                      No courses created yet. Use the form above to add your first university course!
+                    </td>
+                  </tr>
                   <tr v-for="c in coursesList" :key="c.course_id">
                     <td><code class="code-pill">{{ c.course_code || 'CRS' }}</code></td>
                     <td class="font-bold">{{ c.course_name }}</td>
                     <td>{{ c.student_count }} Students</td>
                     <td>
-                      <select v-model="selectedTeacherMap[c.course_id]" class="table-select">
+                      <select
+                        v-model="selectedTeacherMap[c.course_id]"
+                        class="table-select"
+                        @change="handleAssignTeacher(c.course_id)"
+                      >
                         <option value="">-- Unassigned --</option>
                         <option v-for="t in teachersList" :key="t.user_id" :value="t.user_id">
                           {{ t.name }} ({{ t.email }})

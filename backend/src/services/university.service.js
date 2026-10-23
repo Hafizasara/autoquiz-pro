@@ -225,6 +225,7 @@ export const processUniversityCSV = async (universityId, adminUserId, csvContent
  * Get all courses for a university with assigned teacher and enrolled student counts
  */
 export const getUniversityCourses = async (universityId) => {
+  const targetUniId = universityId || 1;
   const res = await query(
     `SELECT 
       c.course_id,
@@ -238,10 +239,10 @@ export const getUniversityCourses = async (universityId) => {
      FROM public.courses c
      LEFT JOIN public.users t ON c.user_id = t.user_id
      LEFT JOIN public.students s ON c.course_id = s.course_id
-     WHERE c.university_id = $1
+     WHERE c.university_id = $1 OR c.university_id IS NULL
      GROUP BY c.course_id, c.course_name, c.course_code, c.created_at, c.user_id, t.name, t.email
      ORDER BY c.course_id DESC`,
-    [universityId]
+    [targetUniId]
   );
   return res.rows;
 };
@@ -250,28 +251,30 @@ export const getUniversityCourses = async (universityId) => {
  * Assign a teacher to a course
  */
 export const assignTeacherToCourse = async (universityId, courseId, teacherId) => {
-  // If teacherId provided, verify teacher belongs to this university
-  if (teacherId) {
+  const targetUniId = universityId || 1;
+  const resolvedTeacherId = teacherId ? parseInt(teacherId, 10) : null;
+
+  if (resolvedTeacherId) {
     const tCheck = await query(
       `SELECT user_id FROM public.users 
-       WHERE user_id = $1 AND role = 'TEACHER' AND university_id = $2`,
-      [teacherId, universityId]
+       WHERE user_id = $1 AND role = 'TEACHER'`,
+      [resolvedTeacherId]
     );
     if (tCheck.rows.length === 0) {
-      throw new Error('Selected teacher is not part of this university or does not exist.');
+      throw new Error('Selected teacher does not exist.');
     }
   }
 
   const res = await query(
     `UPDATE public.courses 
-     SET user_id = $1 
-     WHERE course_id = $2 AND university_id = $3
+     SET user_id = $1, university_id = COALESCE(university_id, $3)
+     WHERE course_id = $2
      RETURNING *`,
-    [teacherId || null, courseId, universityId]
+    [resolvedTeacherId, courseId, targetUniId]
   );
 
   if (res.rows.length === 0) {
-    throw new Error('Course not found in this university.');
+    throw new Error('Course not found.');
   }
 
   return res.rows[0];
@@ -283,11 +286,14 @@ export const assignTeacherToCourse = async (universityId, courseId, teacherId) =
 export const createUniversityCourse = async (universityId, { courseName, courseCode, teacherId }) => {
   if (!courseName) throw new Error('Course name is required.');
 
+  const targetUniId = universityId || 1;
+  const resolvedTeacherId = teacherId ? parseInt(teacherId, 10) : null;
+
   const res = await query(
     `INSERT INTO public.courses (university_id, course_name, course_code, user_id)
      VALUES ($1, $2, $3, $4)
      RETURNING *`,
-    [universityId, courseName.trim(), (courseCode || '').trim().toUpperCase() || null, teacherId || null]
+    [targetUniId, courseName.trim(), (courseCode || '').trim().toUpperCase() || null, resolvedTeacherId]
   );
   return res.rows[0];
 };
@@ -306,10 +312,10 @@ export const getTeacherAssignedCourses = async (teacherId, universityId) => {
       COUNT(s.student_id)::int as student_count
      FROM public.courses c
      LEFT JOIN public.students s ON c.course_id = s.course_id
-     WHERE c.user_id = $1 AND c.university_id = $2
+     WHERE c.user_id = $1
      GROUP BY c.course_id, c.course_name, c.course_code, c.created_at
      ORDER BY c.course_id DESC`,
-    [teacherId, universityId]
+    [teacherId]
   );
   return res.rows;
 };

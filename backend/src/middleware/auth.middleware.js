@@ -25,7 +25,7 @@ export const requireAuth = async (req, res, next) => {
       const decoded = jwt.verify(token, JWT_SECRET);
       if (decoded && decoded.userId) {
         const dbRes = await query(
-          'SELECT user_id, name, email, role, is_active, avatar_url FROM public.users WHERE user_id = $1',
+          'SELECT user_id, name, email, role, is_active, avatar_url, university_id FROM public.users WHERE user_id = $1',
           [decoded.userId]
         );
 
@@ -34,6 +34,12 @@ export const requireAuth = async (req, res, next) => {
         }
 
         req.user = dbRes.rows[0];
+        if (!req.user.university_id && decoded.universityId) {
+          req.user.university_id = decoded.universityId;
+        }
+        if (!req.user.university_id) {
+          req.user.university_id = 1;
+        }
         return next();
       }
     } catch (jwtErr) {
@@ -42,12 +48,15 @@ export const requireAuth = async (req, res, next) => {
         const { data: { user: sbUser }, error } = await supabase.auth.getUser(token);
         if (!error && sbUser) {
           const dbRes = await query(
-            'SELECT user_id, name, email, role, is_active, avatar_url FROM public.users WHERE email = $1 OR supabase_uid = $2',
+            'SELECT user_id, name, email, role, is_active, avatar_url, university_id FROM public.users WHERE email = $1 OR supabase_uid = $2',
             [sbUser.email, sbUser.id]
           );
 
           if (dbRes.rows.length > 0 && dbRes.rows[0].is_active) {
             req.user = dbRes.rows[0];
+            if (!req.user.university_id) {
+              req.user.university_id = 1;
+            }
             return next();
           }
         }

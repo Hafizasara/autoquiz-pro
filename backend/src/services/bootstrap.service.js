@@ -21,7 +21,9 @@ export const runSystemBootstrap = async () => {
       ALTER TABLE public.users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
       ALTER TABLE public.users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(20) DEFAULT 'email';
       ALTER TABLE public.users ADD COLUMN IF NOT EXISTS university_id INTEGER;
-      ALTER TABLE public.invitations ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+      UPDATE public.users SET university_id = 1 WHERE university_id IS NULL;
+      UPDATE public.courses SET university_id = 1 WHERE university_id IS NULL;
+      UPDATE public.invitations SET university_id = 1 WHERE university_id IS NULL;
     `);
 
     // Ensure Assessments Table and all its columns exist

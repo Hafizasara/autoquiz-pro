@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import LoginView from '../views/LoginView.vue';
+import RegisterView from '../views/RegisterView.vue';
+import VerifyEmailView from '../views/VerifyEmailView.vue';
 import DashboardView from '../views/DashboardView.vue';
 import OAuthCallbackView from '../views/OAuthCallbackView.vue';
 import { useAuth } from '../store/auth';
@@ -17,6 +19,17 @@ const routes = [
     name: 'Login',
     component: LoginView,
     meta: { guestOnly: true }
+  },
+  {
+    path: '/register',
+    name: 'Register',
+    component: RegisterView,
+    meta: { guestOnly: true }
+  },
+  {
+    path: '/verify-email',
+    name: 'VerifyEmail',
+    component: VerifyEmailView
   },
   {
     path: '/auth/callback',
@@ -43,7 +56,6 @@ const router = createRouter({
 router.beforeEach(async (to, from, next) => {
   const auth = useAuth();
 
-  // If initial load and not verified yet
   if (auth.isLoading.value) {
     await auth.initAuth();
   }

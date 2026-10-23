@@ -7,23 +7,49 @@ import {
   fetchInvitations,
   createInvitation,
   revokeInvitation,
-  fetchAdminUsers
+  fetchAdminUsers,
+  fetchAdminCourses,
+  createAdminCourse,
+  assignCourseTeacher,
+  fetchAdminTeachers,
+  uploadAdminCSV,
+  fetchTeacherCourses
 } from '../api';
 
 const router = useRouter();
 const auth = useAuth();
 
+// Teacher State
+const teacherCourses = ref([]);
+const teacherLoading = ref(true);
+
 // Admin Panel State
 const stats = ref(null);
 const invitations = ref([]);
 const usersList = ref([]);
+const coursesList = ref([]);
+const teachersList = ref([]);
+
 const newInviteRole = ref('TEACHER');
 const newInviteDays = ref(30);
 const isGenerating = ref(false);
 const latestGeneratedCode = ref(null);
+
+// Course Creation Modal / Form
+const newCourseForm = ref({ courseName: '', courseCode: '', teacherId: '' });
+const isCreatingCourse = ref(false);
+
+// Course Assignment Map
+const selectedTeacherMap = ref({});
+
+// CSV Upload State
+const csvFile = ref(null);
+const isUploadingCSV = ref(false);
+const csvUploadResult = ref(null);
+
 const adminErrorMessage = ref('');
 const adminSuccessMessage = ref('');
-const activeAdminTab = ref('INVITATIONS'); // 'INVITATIONS' | 'USERS'
+const activeAdminTab = ref('COURSES'); // 'COURSES' | 'INVITATIONS' | 'CSV' | 'USERS'
 
 const handleLogout = async () => {
   await auth.logout();
@@ -32,26 +58,49 @@ const handleLogout = async () => {
 
 const copyToClipboard = (text) => {
   navigator.clipboard.writeText(text);
-  adminSuccessMessage.value = `Copied code "${text}" to clipboard!`;
+  adminSuccessMessage.value = `Copied "${text}" to clipboard!`;
   setTimeout(() => {
     adminSuccessMessage.value = '';
   }, 3000);
 };
 
+// Load Teacher Assigned Courses
+const loadTeacherData = async () => {
+  teacherLoading.value = true;
+  try {
+    const res = await fetchTeacherCourses(auth.token.value);
+    teacherCourses.value = res.data?.courses || [];
+  } catch (err) {
+    console.error('Error fetching teacher courses:', err);
+  } finally {
+    teacherLoading.value = false;
+  }
+};
+
+// Load Admin Data
 const loadAdminData = async () => {
   if (!auth.isAdmin.value) return;
   adminErrorMessage.value = '';
 
   try {
-    const [statsRes, invitesRes, usersRes] = await Promise.all([
+    const [statsRes, invitesRes, usersRes, coursesRes, teachersRes] = await Promise.all([
       fetchAdminStats(auth.token.value),
       fetchInvitations(auth.token.value),
-      fetchAdminUsers(auth.token.value)
+      fetchAdminUsers(auth.token.value),
+      fetchAdminCourses(auth.token.value),
+      fetchAdminTeachers(auth.token.value)
     ]);
 
     stats.value = statsRes.data;
     invitations.value = invitesRes.data.invitations;
     usersList.value = usersRes.data.users;
+    coursesList.value = coursesRes.data.courses;
+    teachersList.value = teachersRes.data.teachers;
+
+    // Initialize course assignment selection
+    coursesList.value.forEach(c => {
+      selectedTeacherMap.value[c.course_id] = c.teacher_id || '';
+    });
   } catch (err) {
     adminErrorMessage.value = err.message || 'Failed to load administrator data';
   }
@@ -91,9 +140,76 @@ const handleRevokeInvite = async (invitationId, code) => {
   }
 };
 
-onMounted(() => {
-  if (auth.isAdmin.value) {
-    loadAdminData();
+const handleCreateCourse = async () => {
+  if (!newCourseForm.value.courseName) return;
+  isCreatingCourse.value = true;
+  adminErrorMessage.value = '';
+
+  try {
+    await createAdminCourse(auth.token.value, {
+      courseName: newCourseForm.value.courseName,
+      courseCode: newCourseForm.value.courseCode,
+      teacherId: newCourseForm.value.teacherId || null
+    });
+
+    adminSuccessMessage.value = `Course "${newCourseForm.value.courseName}" created successfully!`;
+    newCourseForm.value = { courseName: '', courseCode: '', teacherId: '' };
+    await loadAdminData();
+  } catch (err) {
+    adminErrorMessage.value = err.message;
+  } finally {
+    isCreatingCourse.value = false;
+  }
+};
+
+const handleAssignTeacher = async (courseId) => {
+  const teacherId = selectedTeacherMap.value[courseId] || null;
+  adminErrorMessage.value = '';
+
+  try {
+    await assignCourseTeacher(auth.token.value, courseId, teacherId ? parseInt(teacherId, 10) : null);
+    adminSuccessMessage.value = 'Teacher course assignment updated successfully!';
+    await loadAdminData();
+  } catch (err) {
+    adminErrorMessage.value = err.message;
+  }
+};
+
+const onFileSelected = (e) => {
+  const file = e.target.files[0];
+  if (file) {
+    csvFile.value = file;
+  }
+};
+
+const handleUploadCSV = async () => {
+  if (!csvFile.value) {
+    adminErrorMessage.value = 'Please select a CSV file first.';
+    return;
+  }
+
+  isUploadingCSV.value = true;
+  adminErrorMessage.value = '';
+  csvUploadResult.value = null;
+
+  try {
+    const res = await uploadAdminCSV(auth.token.value, csvFile.value);
+    csvUploadResult.value = res.data;
+    adminSuccessMessage.value = res.message;
+    csvFile.value = null;
+    await loadAdminData();
+  } catch (err) {
+    adminErrorMessage.value = err.message;
+  } finally {
+    isUploadingCSV.value = false;
+  }
+};
+
+onMounted(async () => {
+  if (auth.isTeacher.value) {
+    await loadTeacherData();
+  } else if (auth.isAdmin.value) {
+    await loadAdminData();
   }
 });
 </script>
@@ -110,7 +226,7 @@ onMounted(() => {
         </div>
         <div>
           <h1 class="nav-title">AutoQuiz Pro</h1>
-          <p class="nav-subtitle">AI Exam & Assessment Platform</p>
+          <p class="nav-subtitle">{{ auth.user.value?.universityName || 'Institutional Academic Hub' }}</p>
         </div>
       </div>
 
@@ -134,7 +250,7 @@ onMounted(() => {
       </div>
     </header>
 
-    <!-- Main Dashboard Body -->
+    <!-- Main Dashboard Content -->
     <main class="dashboard-content">
       <!-- ============================================== -->
       <!-- VIEW 1: STUDENT DASHBOARD                     -->
@@ -142,193 +258,182 @@ onMounted(() => {
       <section v-if="auth.isStudent.value" class="role-view">
         <div class="glass-card banner-card">
           <div class="badge badge-success">
-            <span class="badge-dot"></span> Verified University Student
+            <span class="badge-dot"></span> {{ auth.user.value?.universityName || 'University Student' }}
           </div>
           <h2 class="banner-title">Welcome, {{ auth.user.value?.name }}!</h2>
           <p class="banner-text">
-            You are authenticated with your official university account (<code>{{ auth.user.value?.email }}</code>).
-            Here you can attempt AI-generated quizzes, practice problem-solving, and view instant pedagogical feedback.
+            Authenticated via your official institutional account (<code>{{ auth.user.value?.email }}</code>).
+            Your AI-graded quizzes and examination schedules will appear here.
           </p>
         </div>
 
         <div class="grid-cards">
           <div class="glass-card stat-card">
             <div class="stat-number">0</div>
-            <div class="stat-label">Pending Assessments</div>
-            <p class="stat-hint">Active exams assigned by your instructors</p>
+            <div class="stat-label">Active Assessments</div>
+            <p class="stat-hint">Exams currently open for completion</p>
           </div>
 
           <div class="glass-card stat-card">
             <div class="stat-number">0</div>
-            <div class="stat-label">Completed Quizzes</div>
-            <p class="stat-hint">Submissions graded by AI & instructors</p>
+            <div class="stat-label">Completed Assessments</div>
+            <p class="stat-hint">Graded submissions with feedback</p>
           </div>
 
           <div class="glass-card stat-card">
             <div class="stat-number">100%</div>
-            <div class="stat-label">Academic Standing</div>
-            <p class="stat-hint">Official Student Credential Active</p>
+            <div class="stat-label">Institutional Status</div>
+            <p class="stat-hint">Active Student Credential</p>
           </div>
         </div>
       </section>
 
       <!-- ============================================== -->
-      <!-- VIEW 2: TEACHER STUDIO                         -->
+      <!-- VIEW 2: TEACHER DASHBOARD (BLANK vs ASSIGNED)  -->
       <!-- ============================================== -->
       <section v-if="auth.isTeacher.value" class="role-view">
         <div class="glass-card banner-card">
           <div class="badge badge-info">
-            <span class="badge-dot"></span> Verified Educator Studio
+            <span class="badge-dot"></span> {{ auth.user.value?.universityName || 'Academic Faculty' }}
           </div>
-          <h2 class="banner-title">Welcome, Professor {{ auth.user.value?.name }}</h2>
+          <h2 class="banner-title">Educator Studio &bull; {{ auth.user.value?.name }}</h2>
           <p class="banner-text">
-            Your Teacher account was authorized with an administrator invitation code.
-            You have full access to AI question generation (Gemini), rubric creation, and automated answer marking.
+            Registered with your university invitation code. Course access and exam generation are configured below.
           </p>
         </div>
 
-        <div class="grid-cards">
-          <div class="glass-card action-card">
-            <div class="card-icon-box bg-indigo">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-              </svg>
-            </div>
-            <h3 class="action-card-title">AI Quiz Generator</h3>
-            <p class="action-card-desc">Synthesize customized multiple-choice & short-answer exams using Gemini 2.0 Flash.</p>
-            <span class="badge badge-info">Gemini AI Ready</span>
+        <!-- 2A. BLANK DASHBOARD STATE (When 0 courses assigned by Admin) -->
+        <div v-if="!teacherLoading && teacherCourses.length === 0" class="glass-card empty-dashboard-card">
+          <div class="empty-icon-circle">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+              <path d="M6 6h10M6 10h10"/>
+              <circle cx="12" cy="16" r="1.5"/>
+            </svg>
           </div>
 
-          <div class="glass-card action-card">
-            <div class="card-icon-box bg-green">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
-                <line x1="16" y1="13" x2="8" y2="13"/>
-                <line x1="16" y1="17" x2="8" y2="17"/>
-              </svg>
-            </div>
-            <h3 class="action-card-title">Bloom's Taxonomy Rubrics</h3>
-            <p class="action-card-desc">Categorize questions by cognitive difficulty (Recall, Analysis, Evaluation).</p>
-            <span class="badge badge-success">Pedagogy Engine</span>
+          <span class="badge badge-warning">
+            <span class="badge-dot"></span> Pending Course Assignment
+          </span>
+
+          <h3 class="empty-title">No Courses Assigned Yet</h3>
+          <p class="empty-desc">
+            You have successfully registered with <strong>{{ auth.user.value?.universityName || 'your university' }}</strong>, but your University Administrator has not assigned any courses to your profile yet.
+          </p>
+
+          <div class="empty-notice-box">
+            <p class="empty-notice-title">What happens next?</p>
+            <p class="empty-notice-text">
+              Your administrator manages curriculum and course allocations. Once they assign your courses in the University Admin Console, your course studios, Gemini question generators, and student rosters will automatically unlock here.
+            </p>
           </div>
 
-          <div class="glass-card action-card">
-            <div class="card-icon-box bg-cyan">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-              </svg>
+          <button class="btn btn-secondary" @click="loadTeacherData">
+            Refresh Course Allocations
+          </button>
+        </div>
+
+        <!-- 2B. ACTIVE DASHBOARD STATE (When courses ARE assigned) -->
+        <div v-else-if="!teacherLoading && teacherCourses.length > 0" class="assigned-courses-section">
+          <div class="section-top-row">
+            <div>
+              <h3 class="section-title">Your Assigned Courses ({{ teacherCourses.length }})</h3>
+              <p class="section-desc">Courses assigned to you by your university administrator.</p>
             </div>
-            <h3 class="action-card-title">Automated Answer Marking</h3>
-            <p class="action-card-desc">Grade student submissions with instant semantic feedback and rubric scoring.</p>
-            <span class="badge badge-info">Evaluation API</span>
+            <button class="btn btn-secondary btn-sm" @click="loadTeacherData">
+              Refresh
+            </button>
+          </div>
+
+          <div class="grid-cards">
+            <div v-for="c in teacherCourses" :key="c.course_id" class="glass-card course-card">
+              <div class="course-header">
+                <span class="course-badge">{{ c.course_code || 'CRS' }}</span>
+                <span class="student-count">{{ c.student_count }} Students</span>
+              </div>
+              <h4 class="course-name">{{ c.course_name }}</h4>
+              <p class="course-meta">Assigned curriculum module</p>
+
+              <div class="course-actions">
+                <button class="btn btn-primary btn-block btn-sm">
+                  + Generate AI Quiz with Gemini
+                </button>
+                <button class="btn btn-secondary btn-block btn-sm">
+                  View Student Submissions
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
       <!-- ============================================== -->
-      <!-- VIEW 3: ADMIN CONSOLE                          -->
+      <!-- VIEW 3: UNIVERSITY ADMIN CONSOLE               -->
       <!-- ============================================== -->
       <section v-if="auth.isAdmin.value" class="role-view">
         <div class="glass-card banner-card">
           <div class="badge badge-warning">
-            <span class="badge-dot"></span> Administrator Control Center
+            <span class="badge-dot"></span> University Administrator Portal
           </div>
-          <h2 class="banner-title">System Administration & Access Control</h2>
+          <h2 class="banner-title">{{ auth.user.value?.universityName || 'Institution Administration' }}</h2>
           <p class="banner-text">
-            Generate one-time invitation codes for Teachers and Admins, audit code usage, and monitor registered users.
+            Upload CSV rosters, assign courses to teachers, generate one-time teacher invitation codes, and monitor users.
           </p>
         </div>
 
-        <!-- Global Admin Alerts -->
-        <div v-if="adminSuccessMessage" class="alert alert-success">
-          {{ adminSuccessMessage }}
-        </div>
-        <div v-if="adminErrorMessage" class="alert alert-error">
-          {{ adminErrorMessage }}
-        </div>
+        <!-- Alerts -->
+        <div v-if="adminSuccessMessage" class="alert alert-success">{{ adminSuccessMessage }}</div>
+        <div v-if="adminErrorMessage" class="alert alert-error">{{ adminErrorMessage }}</div>
 
-        <!-- Stats Overview Cards -->
+        <!-- System Stats Grid -->
         <div v-if="stats" class="grid-cards">
           <div class="glass-card stat-card">
-            <div class="stat-number">{{ stats.users?.total_users || 0 }}</div>
-            <div class="stat-label">Total Users</div>
+            <div class="stat-number">{{ stats.courses?.total_courses || 0 }}</div>
+            <div class="stat-label">Total Courses</div>
             <div class="stat-breakdown">
-              <span>{{ stats.users?.teacher_count || 0 }} Teachers</span> &bull;
-              <span>{{ stats.users?.student_count || 0 }} Students</span> &bull;
-              <span>{{ stats.users?.admin_count || 0 }} Admins</span>
+              <span>{{ stats.courses?.assigned_courses || 0 }} Assigned</span> &bull;
+              <span>{{ stats.courses?.unassigned_courses || 0 }} Unassigned</span>
             </div>
+          </div>
+
+          <div class="glass-card stat-card">
+            <div class="stat-number">{{ stats.users?.teacher_count || 0 }}</div>
+            <div class="stat-label">Registered Teachers</div>
+            <p class="stat-hint">Teachers registered via invitation codes</p>
+          </div>
+
+          <div class="glass-card stat-card">
+            <div class="stat-number">{{ stats.users?.student_count || 0 }}</div>
+            <div class="stat-label">University Students</div>
+            <p class="stat-hint">Active institutional student accounts</p>
           </div>
 
           <div class="glass-card stat-card">
             <div class="stat-number">{{ stats.invitations?.active_invites || 0 }}</div>
-            <div class="stat-label">Active One-Time Codes</div>
-            <p class="stat-hint">Unused invitation codes ready for distribution</p>
-          </div>
-
-          <div class="glass-card stat-card">
-            <div class="stat-number">{{ stats.invitations?.used_invites || 0 }}</div>
-            <div class="stat-label">Redeemed Codes</div>
-            <p class="stat-hint">Codes successfully claimed by verified users</p>
+            <div class="stat-label">Active Invites</div>
+            <p class="stat-hint">One-time codes awaiting redemption</p>
           </div>
         </div>
 
-        <!-- Invitation Generator Widget -->
-        <div class="glass-card generator-card">
-          <div class="generator-header">
-            <div>
-              <h3 class="section-title">Create Single-Use Invitation Code</h3>
-              <p class="section-desc">
-                Teachers and Admins can only register using a valid, single-use invitation code generated here.
-              </p>
-            </div>
-          </div>
-
-          <form @submit.prevent="handleCreateInvite" class="generator-form">
-            <div class="form-row">
-              <div class="field-item">
-                <label class="form-label">Assign Role</label>
-                <select v-model="newInviteRole" class="form-select">
-                  <option value="TEACHER">TEACHER (Educator Studio)</option>
-                  <option value="ADMIN">ADMIN (System Administrator)</option>
-                </select>
-              </div>
-
-              <div class="field-item">
-                <label class="form-label">Expires In</label>
-                <select v-model="newInviteDays" class="form-select">
-                  <option :value="7">7 Days</option>
-                  <option :value="30">30 Days</option>
-                  <option :value="90">90 Days</option>
-                  <option :value="365">1 Year</option>
-                </select>
-              </div>
-
-              <button type="submit" class="btn btn-primary btn-generate" :disabled="isGenerating">
-                {{ isGenerating ? 'Generating...' : '+ Generate Invitation Code' }}
-              </button>
-            </div>
-          </form>
-
-          <!-- Newly Created Code Banner with 1-Click Copy -->
-          <div v-if="latestGeneratedCode" class="new-code-banner">
-            <div>
-              <span class="new-code-label">Newly Generated Invitation Code:</span>
-              <div class="new-code-display">{{ latestGeneratedCode }}</div>
-            </div>
-            <button class="btn btn-secondary btn-copy" @click="copyToClipboard(latestGeneratedCode)">
-              Copy to Clipboard
-            </button>
-          </div>
-        </div>
-
-        <!-- Admin Navigation Tabs: Invitations vs Users -->
+        <!-- Admin Sub-Navigation Tabs -->
         <div class="admin-tabs">
+          <button
+            :class="['admin-tab-btn', activeAdminTab === 'COURSES' && 'active']"
+            @click="activeAdminTab = 'COURSES'"
+          >
+            Courses & Teacher Assignment ({{ coursesList.length }})
+          </button>
+          <button
+            :class="['admin-tab-btn', activeAdminTab === 'CSV' && 'active']"
+            @click="activeAdminTab = 'CSV'"
+          >
+            Bulk CSV Upload
+          </button>
           <button
             :class="['admin-tab-btn', activeAdminTab === 'INVITATIONS' && 'active']"
             @click="activeAdminTab = 'INVITATIONS'"
           >
-            Invitation Codes Audit Log ({{ invitations.length }})
+            Teacher Invitation Codes ({{ invitations.length }})
           </button>
           <button
             :class="['admin-tab-btn', activeAdminTab === 'USERS' && 'active']"
@@ -338,101 +443,279 @@ onMounted(() => {
           </button>
         </div>
 
-        <!-- TAB 1: Invitations Audit Table -->
-        <div v-if="activeAdminTab === 'INVITATIONS'" class="glass-card table-card">
-          <div class="table-wrapper">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Code</th>
-                  <th>Role</th>
-                  <th>Created By</th>
-                  <th>Status</th>
-                  <th>Usage Details</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="inv in invitations" :key="inv.invitation_id">
-                  <td>
-                    <code class="code-pill">{{ inv.code }}</code>
-                    <button class="btn-copy-inline" title="Copy code" @click="copyToClipboard(inv.code)">
-                      📋
-                    </button>
-                  </td>
-                  <td>
-                    <span :class="['role-pill', inv.role === 'ADMIN' ? 'role-admin' : 'role-teacher']">
-                      {{ inv.role }}
-                    </span>
-                  </td>
-                  <td>{{ inv.created_by_name || 'System Bootstrap' }}</td>
-                  <td>
-                    <span v-if="inv.is_used" class="badge-status badge-status-used">
-                      Redeemed
-                    </span>
-                    <span v-else class="badge-status badge-status-active">
-                      Available (Unused)
-                    </span>
-                  </td>
-                  <td>
-                    <span v-if="inv.is_used" class="used-text">
-                      Used by <strong>{{ inv.used_by_name }}</strong> ({{ inv.used_by_email }})
-                      on {{ new Date(inv.used_at).toLocaleDateString() }}
-                    </span>
-                    <span v-else class="text-dim">
-                      Expires {{ new Date(inv.expires_at).toLocaleDateString() }}
-                    </span>
-                  </td>
-                  <td>
-                    <button
-                      v-if="!inv.is_used"
-                      class="btn-revoke"
-                      @click="handleRevokeInvite(inv.invitation_id, inv.code)"
-                    >
-                      Revoke
-                    </button>
-                    <span v-else class="text-dim">-</span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+        <!-- ============================================== -->
+        <!-- TAB 1: COURSES & TEACHER ASSIGNMENT            -->
+        <!-- ============================================== -->
+        <div v-if="activeAdminTab === 'COURSES'" class="tab-pane">
+          <!-- Create Single Course Form -->
+          <div class="glass-card create-course-box">
+            <h3 class="section-title">Add New University Course</h3>
+            <form @submit.prevent="handleCreateCourse" class="form-row">
+              <div class="field-item">
+                <label class="form-label">Course Name</label>
+                <input
+                  v-model="newCourseForm.courseName"
+                  type="text"
+                  placeholder="e.g. Operating Systems & Architecture"
+                  required
+                  class="form-input"
+                />
+              </div>
+
+              <div class="field-item">
+                <label class="form-label">Course Code</label>
+                <input
+                  v-model="newCourseForm.courseCode"
+                  type="text"
+                  placeholder="e.g. CS-301"
+                  required
+                  class="form-input code-input"
+                />
+              </div>
+
+              <div class="field-item">
+                <label class="form-label">Assign Teacher (Optional)</label>
+                <select v-model="newCourseForm.teacherId" class="form-select">
+                  <option value="">-- Leave Unassigned --</option>
+                  <option v-for="t in teachersList" :key="t.user_id" :value="t.user_id">
+                    {{ t.name }} ({{ t.email }})
+                  </option>
+                </select>
+              </div>
+
+              <button type="submit" class="btn btn-primary btn-generate" :disabled="isCreatingCourse">
+                {{ isCreatingCourse ? 'Creating...' : '+ Create Course' }}
+              </button>
+            </form>
+          </div>
+
+          <!-- Courses Table with Teacher Assignment Dropdown -->
+          <div class="glass-card table-card">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Course Name</th>
+                    <th>Enrolled Students</th>
+                    <th>Assigned Teacher</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="c in coursesList" :key="c.course_id">
+                    <td><code class="code-pill">{{ c.course_code || 'CRS' }}</code></td>
+                    <td class="font-bold">{{ c.course_name }}</td>
+                    <td>{{ c.student_count }} Students</td>
+                    <td>
+                      <select v-model="selectedTeacherMap[c.course_id]" class="table-select">
+                        <option value="">-- Unassigned --</option>
+                        <option v-for="t in teachersList" :key="t.user_id" :value="t.user_id">
+                          {{ t.name }} ({{ t.email }})
+                        </option>
+                      </select>
+                    </td>
+                    <td>
+                      <button class="btn btn-primary btn-xs" @click="handleAssignTeacher(c.course_id)">
+                        Save Assignment
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 
-        <!-- TAB 2: User Directory Table -->
-        <div v-if="activeAdminTab === 'USERS'" class="glass-card table-card">
-          <div class="table-wrapper">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>User ID</th>
-                  <th>Name</th>
-                  <th>Email</th>
-                  <th>Verified Role</th>
-                  <th>Auth Provider</th>
-                  <th>Registered</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="u in usersList" :key="u.user_id">
-                  <td>#{{ u.user_id }}</td>
-                  <td class="font-bold">{{ u.name }}</td>
-                  <td>{{ u.email }}</td>
-                  <td>
-                    <span :class="[
-                      'role-pill',
-                      u.role === 'ADMIN' ? 'role-admin' : (u.role === 'TEACHER' ? 'role-teacher' : 'role-student')
-                    ]">
-                      {{ u.role }}
-                    </span>
-                  </td>
-                  <td>
-                    <span class="provider-tag">{{ u.auth_provider }}</span>
-                  </td>
-                  <td>{{ new Date(u.created_at).toLocaleDateString() }}</td>
-                </tr>
-              </tbody>
-            </table>
+        <!-- ============================================== -->
+        <!-- TAB 2: BULK CSV UPLOAD                         -->
+        <!-- ============================================== -->
+        <div v-if="activeAdminTab === 'CSV'" class="tab-pane">
+          <div class="glass-card csv-upload-card">
+            <div class="card-intro">
+              <h3 class="section-title">Upload University CSV File</h3>
+              <p class="section-desc">
+                Bulk import courses, assign teachers, upload student rosters, or generate teacher invitation codes in seconds.
+              </p>
+            </div>
+
+            <div class="csv-upload-box">
+              <input type="file" accept=".csv" @change="onFileSelected" class="file-input" />
+              <button
+                class="btn btn-primary"
+                @click="handleUploadCSV"
+                :disabled="isUploadingCSV || !csvFile"
+              >
+                {{ isUploadingCSV ? 'Processing CSV...' : 'Process & Import CSV File' }}
+              </button>
+            </div>
+
+            <!-- Upload Results Card -->
+            <div v-if="csvUploadResult" class="csv-result-box">
+              <h4 class="result-title">✓ Import Completed (Type: {{ csvUploadResult.detectedType }})</h4>
+              <p>Total Rows: <strong>{{ csvUploadResult.totalRows }}</strong> &bull; Records Processed: <strong>{{ csvUploadResult.processed }}</strong></p>
+
+              <div v-if="csvUploadResult.invitationsGenerated?.length" class="invites-generated-box">
+                <p class="invites-title">Generated Teacher Invitation Codes:</p>
+                <div class="invites-list">
+                  <div v-for="(inv, idx) in csvUploadResult.invitationsGenerated" :key="idx" class="invite-item">
+                    <span>{{ inv.email || inv.name }} ({{ inv.courseCode || 'General' }}):</span>
+                    <code class="code-pill">{{ inv.code }}</code>
+                    <button class="btn-copy-inline" @click="copyToClipboard(inv.code)">📋</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Sample CSV Formats Reference -->
+            <div class="csv-templates-guide">
+              <h4 class="guide-title">Supported CSV Formats:</h4>
+              <div class="grid-templates">
+                <div class="template-card">
+                  <span class="template-tag">Format 1: Courses & Teachers</span>
+                  <pre>course_code,course_name,teacher_email
+CS-101,Introduction to CS,john@uni.edu
+CS-201,Data Structures,sarah@uni.edu</pre>
+                </div>
+
+                <div class="template-card">
+                  <span class="template-tag">Format 2: Students Roster</span>
+                  <pre>name,roll_number,email,course_code
+Alice Smith,2026-CS-01,alice@uni.edu,CS-101
+Bob Vance,2026-CS-02,bob@uni.edu,CS-101</pre>
+                </div>
+
+                <div class="template-card">
+                  <span class="template-tag">Format 3: Teachers List</span>
+                  <pre>name,email
+Dr. Alan Turing,alan@uni.edu
+Dr. Ada Lovelace,ada@uni.edu</pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================== -->
+        <!-- TAB 3: INVITATIONS                             -->
+        <!-- ============================================== -->
+        <div v-if="activeAdminTab === 'INVITATIONS'" class="tab-pane">
+          <div class="glass-card generator-card">
+            <h3 class="section-title">Generate Teacher Invitation Code</h3>
+            <p class="section-desc">Create single-use invitation codes for instructors in {{ auth.user.value?.universityName }}.</p>
+
+            <form @submit.prevent="handleCreateInvite" class="form-row">
+              <div class="field-item">
+                <label class="form-label">Role</label>
+                <select v-model="newInviteRole" class="form-select">
+                  <option value="TEACHER">TEACHER (Educator Studio)</option>
+                  <option value="ADMIN">ADMIN (Additional Admin)</option>
+                </select>
+              </div>
+
+              <div class="field-item">
+                <label class="form-label">Expires In</label>
+                <select v-model="newInviteDays" class="form-select">
+                  <option :value="30">30 Days</option>
+                  <option :value="60">60 Days</option>
+                  <option :value="90">90 Days</option>
+                  <option :value="365">1 Year</option>
+                </select>
+              </div>
+
+              <button type="submit" class="btn btn-primary btn-generate" :disabled="isGenerating">
+                {{ isGenerating ? 'Generating...' : '+ Create Invitation Code' }}
+              </button>
+            </form>
+
+            <div v-if="latestGeneratedCode" class="new-code-banner">
+              <div>
+                <span class="new-code-label">One-Time Invitation Code:</span>
+                <div class="new-code-display">{{ latestGeneratedCode }}</div>
+              </div>
+              <button class="btn btn-secondary btn-copy" @click="copyToClipboard(latestGeneratedCode)">
+                Copy to Clipboard
+              </button>
+            </div>
+          </div>
+
+          <div class="glass-card table-card">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Usage Details</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="inv in invitations" :key="inv.invitation_id">
+                    <td>
+                      <code class="code-pill">{{ inv.code }}</code>
+                      <button class="btn-copy-inline" title="Copy code" @click="copyToClipboard(inv.code)">📋</button>
+                    </td>
+                    <td>
+                      <span :class="['role-pill', inv.role === 'ADMIN' ? 'role-admin' : 'role-teacher']">{{ inv.role }}</span>
+                    </td>
+                    <td>
+                      <span v-if="inv.is_used" class="badge-status badge-status-used">Redeemed</span>
+                      <span v-else class="badge-status badge-status-active">Available</span>
+                    </td>
+                    <td>
+                      <span v-if="inv.is_used" class="used-text">
+                        Used by <strong>{{ inv.used_by_name }}</strong> ({{ inv.used_by_email }}) on {{ new Date(inv.used_at).toLocaleDateString() }}
+                      </span>
+                      <span v-else class="text-dim">Expires {{ new Date(inv.expires_at).toLocaleDateString() }}</span>
+                    </td>
+                    <td>
+                      <button v-if="!inv.is_used" class="btn-revoke" @click="handleRevokeInvite(inv.invitation_id, inv.code)">
+                        Revoke
+                      </button>
+                      <span v-else class="text-dim">-</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================== -->
+        <!-- TAB 4: USERS DIRECTORY                         -->
+        <!-- ============================================== -->
+        <div v-if="activeAdminTab === 'USERS'" class="tab-pane">
+          <div class="glass-card table-card">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>User ID</th>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Auth Provider</th>
+                    <th>Registered</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="u in usersList" :key="u.user_id">
+                    <td>#{{ u.user_id }}</td>
+                    <td class="font-bold">{{ u.name }}</td>
+                    <td>{{ u.email }}</td>
+                    <td>
+                      <span :class="['role-pill', u.role === 'ADMIN' ? 'role-admin' : (u.role === 'TEACHER' ? 'role-teacher' : 'role-student')]">
+                        {{ u.role }}
+                      </span>
+                    </td>
+                    <td><span class="provider-tag">{{ u.auth_provider }}</span></td>
+                    <td>{{ new Date(u.created_at).toLocaleDateString() }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
@@ -451,7 +734,6 @@ onMounted(() => {
   min-height: 100vh;
 }
 
-/* Navbar */
 .navbar {
   display: flex;
   justify-content: space-between;
@@ -524,7 +806,11 @@ onMounted(() => {
   font-size: 0.82rem;
 }
 
-/* Role Views */
+.btn-xs {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+}
+
 .role-view {
   display: flex;
   flex-direction: column;
@@ -557,99 +843,165 @@ onMounted(() => {
   color: var(--accent-cyan);
 }
 
-/* Grid Cards */
-.grid-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1.5rem;
-}
-
-.stat-card {
-  padding: 1.75rem;
+/* Empty Dashboard State for Teachers with 0 assigned courses */
+.empty-dashboard-card {
+  padding: 3.5rem 2.5rem;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  align-items: center;
+  text-align: center;
+  gap: 1.25rem;
+  border: 1px dashed var(--border-color);
 }
 
-.stat-number {
-  font-family: var(--font-heading);
-  font-size: 2.25rem;
-  font-weight: 800;
-  color: var(--text-main);
-}
-
-.stat-label {
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--text-main);
-}
-
-.stat-hint {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
-.stat-breakdown {
-  font-size: 0.8rem;
-  color: var(--accent-cyan);
-}
-
-/* Action Cards */
-.action-card {
-  padding: 1.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.card-icon-box {
-  width: 44px;
-  height: 44px;
-  border-radius: var(--radius-sm);
+.empty-icon-circle {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.card-icon-box svg {
-  width: 22px;
-  height: 22px;
+.empty-icon-circle svg {
+  width: 36px;
+  height: 36px;
 }
 
-.bg-indigo { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
-.bg-green { background: rgba(16, 185, 129, 0.15); color: #34d399; }
-.bg-cyan { background: rgba(6, 182, 212, 0.15); color: #22d3ee; }
-
-.action-card-title {
+.empty-title {
   font-family: var(--font-heading);
-  font-size: 1.15rem;
+  font-size: 1.5rem;
   font-weight: 700;
+  color: var(--text-main);
 }
 
-.action-card-desc {
+.empty-desc {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  max-width: 600px;
+  line-height: 1.6;
+}
+
+.empty-notice-box {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 1.25rem;
+  max-width: 580px;
+  text-align: left;
+}
+
+.empty-notice-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--text-main);
+  margin-bottom: 0.4rem;
+}
+
+.empty-notice-text {
   font-size: 0.85rem;
   color: var(--text-muted);
   line-height: 1.5;
 }
 
-/* Generator Card */
-.generator-card {
-  padding: 2rem;
+/* Assigned Courses Section */
+.assigned-courses-section {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
-  border: 1px solid var(--border-highlight);
+  gap: 1.5rem;
 }
 
-.section-title {
-  font-family: var(--font-heading);
-  font-size: 1.25rem;
+.section-top-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.course-card {
+  padding: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.course-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.course-badge {
+  font-family: monospace;
+  background: rgba(99, 102, 241, 0.15);
+  color: #a5b4fc;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
   font-weight: 700;
 }
 
-.section-desc {
-  font-size: 0.85rem;
+.student-count {
+  font-size: 0.8rem;
+  color: var(--accent-cyan);
+}
+
+.course-name {
+  font-family: var(--font-heading);
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.course-meta {
+  font-size: 0.8rem;
   color: var(--text-muted);
+}
+
+.course-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+/* Admin Tabs */
+.admin-tabs {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 0.5rem;
+  overflow-x: auto;
+}
+
+.admin-tab-btn {
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 0.65rem 1.15rem;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.admin-tab-btn.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+}
+
+.tab-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Course Creation & Form */
+.create-course-box {
+  padding: 1.75rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
 .form-row {
@@ -664,71 +1016,157 @@ onMounted(() => {
   flex-direction: column;
   gap: 0.4rem;
   flex: 1;
-  min-width: 200px;
+  min-width: 180px;
 }
 
-.form-select {
+.form-select, .table-select {
   background: rgba(0, 0, 0, 0.4);
   border: 1px solid var(--border-color);
-  padding: 0.8rem 1rem;
+  padding: 0.65rem 0.85rem;
   border-radius: var(--radius-sm);
   color: var(--text-main);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   outline: none;
 }
 
-.btn-generate {
-  height: 48px;
-  padding: 0 1.5rem;
-  white-space: nowrap;
+.table-select {
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
 }
 
-.new-code-banner {
-  background: rgba(99, 102, 241, 0.12);
-  border: 1px solid rgba(99, 102, 241, 0.35);
-  border-radius: var(--radius-sm);
-  padding: 1rem 1.25rem;
+/* CSV Upload */
+.csv-upload-card {
+  padding: 2rem;
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.csv-upload-box {
+  display: flex;
+  gap: 1rem;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.file-input {
+  color: var(--text-main);
+}
+
+.csv-result-box {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.result-title {
+  color: #34d399;
+  font-weight: 700;
+}
+
+.invites-generated-box {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.invites-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.invites-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.invite-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.csv-templates-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.guide-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.grid-templates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 1rem;
 }
 
-.new-code-label {
-  font-size: 0.8rem;
-  color: #a5b4fc;
-}
-
-.new-code-display {
-  font-family: monospace;
-  font-size: 1.35rem;
-  font-weight: 700;
-  color: #ffffff;
-  letter-spacing: 0.05em;
-}
-
-/* Admin Tabs */
-.admin-tabs {
+.template-card {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
   display: flex;
+  flex-direction: column;
   gap: 0.5rem;
-  border-bottom: 1px solid var(--border-color);
-  padding-bottom: 0.5rem;
 }
 
-.admin-tab-btn {
-  background: transparent;
-  color: var(--text-muted);
+.template-tag {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+}
+
+.template-card pre {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #a5b4fc;
+  overflow-x: auto;
+}
+
+/* Grid & Cards */
+.grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1.5rem;
+}
+
+.stat-card {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.stat-number {
+  font-family: var(--font-heading);
+  font-size: 2rem;
+  font-weight: 800;
+}
+
+.stat-label {
   font-size: 0.9rem;
   font-weight: 600;
-  padding: 0.6rem 1.25rem;
-  border-radius: var(--radius-sm);
 }
 
-.admin-tab-btn.active {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text-main);
-  border: 1px solid var(--border-color);
+.stat-hint, .stat-breakdown {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.stat-breakdown {
+  color: var(--accent-cyan);
 }
 
 /* Tables */
@@ -754,17 +1192,12 @@ onMounted(() => {
   color: var(--text-muted);
   font-weight: 600;
   border-bottom: 1px solid var(--border-color);
-  white-space: nowrap;
 }
 
 .data-table td {
-  padding: 1rem 1.25rem;
+  padding: 0.85rem 1.25rem;
   border-bottom: 1px solid var(--border-color);
   color: var(--text-main);
-}
-
-.data-table tr:hover {
-  background: rgba(255, 255, 255, 0.02);
 }
 
 .code-pill {
@@ -773,7 +1206,6 @@ onMounted(() => {
   padding: 0.2rem 0.5rem;
   border-radius: 4px;
   color: var(--accent-cyan);
-  font-size: 0.85rem;
 }
 
 .btn-copy-inline {
@@ -781,10 +1213,6 @@ onMounted(() => {
   cursor: pointer;
   margin-left: 0.4rem;
   opacity: 0.7;
-}
-
-.btn-copy-inline:hover {
-  opacity: 1;
 }
 
 .role-pill {
@@ -805,15 +1233,8 @@ onMounted(() => {
   border-radius: 4px;
 }
 
-.badge-status-active {
-  background: rgba(16, 185, 129, 0.15);
-  color: #34d399;
-}
-
-.badge-status-used {
-  background: rgba(100, 116, 139, 0.15);
-  color: #94a3b8;
-}
+.badge-status-active { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+.badge-status-used { background: rgba(100, 116, 139, 0.15); color: #94a3b8; }
 
 .btn-revoke {
   background: rgba(244, 63, 94, 0.15);
@@ -824,15 +1245,41 @@ onMounted(() => {
   border-radius: 4px;
 }
 
-.btn-revoke:hover {
-  background: rgba(244, 63, 94, 0.25);
+.generator-card {
+  padding: 1.75rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
 }
 
-.provider-tag {
-  text-transform: uppercase;
-  font-size: 0.7rem;
-  color: var(--text-dim);
+.new-code-banner {
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  border-radius: var(--radius-sm);
+  padding: 1rem 1.25rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.new-code-label {
+  font-size: 0.8rem;
+  color: #a5b4fc;
+}
+
+.new-code-display {
   font-family: monospace;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.btn-generate {
+  height: 44px;
+  padding: 0 1.25rem;
+  white-space: nowrap;
 }
 
 .font-bold {

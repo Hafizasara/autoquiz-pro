@@ -52,8 +52,12 @@ export const runSystemBootstrap = async () => {
       ALTER TABLE public.assessments ADD COLUMN IF NOT EXISTS questions JSONB DEFAULT '[]'::jsonb;
       ALTER TABLE public.assessments ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
       ALTER TABLE public.assessments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+      -- Ensure status constraint accepts standard status strings
+      ALTER TABLE public.assessments DROP CONSTRAINT IF EXISTS chk_assessment_status;
+      ALTER TABLE public.assessments ADD CONSTRAINT chk_assessment_status CHECK (status IN ('DRAFT', 'PUBLISHED', 'COMPLETED', 'draft', 'published', 'active', 'archived'));
     `);
-    log.push('Assessments table and columns verified.');
+    log.push('Assessments table, columns, and constraints verified.');
 
     // 3. Hash Passwords
     const adminPasswordHash = await bcrypt.hash('AdminPassword123!', 10);

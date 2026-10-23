@@ -38,7 +38,8 @@ export const supabaseAdmin = (isSupabaseConfigured && supabaseServiceRoleKey)
 export const dbPool = isDatabaseUrlConfigured
   ? new Pool({
       connectionString: databaseUrl,
-      connectionTimeoutMillis: 5000,
+      connectionTimeoutMillis: 15000,
+      idleTimeoutMillis: 30000,
       ssl: false // Required for Supabase pooler proxy
     })
   : null;

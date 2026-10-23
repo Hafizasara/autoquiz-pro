@@ -385,12 +385,12 @@ onMounted(async () => {
               <p class="course-meta">Assigned curriculum module</p>
 
               <div class="course-actions">
-                <button class="btn btn-primary btn-block btn-sm">
-                  + Generate AI Quiz with Gemini
-                </button>
-                <button class="btn btn-secondary btn-block btn-sm">
-                  View Student Submissions
-                </button>
+                <router-link to="/assessments/create" class="btn btn-primary btn-block btn-sm">
+                  + Create / Generate Assessment
+                </router-link>
+                <router-link to="/assessments" class="btn btn-secondary btn-block btn-sm">
+                  View Assessment Registry
+                </router-link>
               </div>
             </div>
           </div>

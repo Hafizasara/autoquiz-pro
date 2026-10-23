@@ -216,3 +216,40 @@ export const createAdminUser = async (token, { name, email, password }) => {
     body: JSON.stringify({ name, email, password })
   });
 };
+
+// --- ASSESSMENTS API (WEEK 6 TESTING) ---
+
+export const createAssessment = async (token, assessmentData) => {
+  return await request('/assessments', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify(assessmentData)
+  });
+};
+
+export const fetchAssessments = async (token, params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  const endpoint = query ? `/assessments?${query}` : '/assessments';
+  return await request(endpoint, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+};
+
+export const fetchAssessmentById = async (token, id) => {
+  return await request(`/assessments/${id}`, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+};
+
+export const bootstrapSystem = async () => {
+  return await request('/bootstrap', {
+    method: 'POST'
+  });
+};
+

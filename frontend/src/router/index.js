@@ -5,6 +5,7 @@ import FacultyRegisterView from '../views/FacultyRegisterView.vue';
 import VerifyEmailView from '../views/VerifyEmailView.vue';
 import DashboardView from '../views/DashboardView.vue';
 import OAuthCallbackView from '../views/OAuthCallbackView.vue';
+import CreateAssessmentView from '../views/CreateAssessmentView.vue';
 import { useAuth } from '../store/auth';
 
 const routes = [
@@ -48,6 +49,13 @@ const routes = [
     path: '/dashboard',
     name: 'Dashboard',
     component: DashboardView,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/assessments/create',
+    alias: ['/assessments/new', '/assessments'],
+    name: 'CreateAssessment',
+    component: CreateAssessmentView,
     meta: { requiresAuth: true }
   },
   {

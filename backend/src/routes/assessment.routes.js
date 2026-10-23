@@ -154,9 +154,9 @@ router.post('/', requireAuth, async (req, res) => {
 
     const insertRes = await query(
       `INSERT INTO public.assessments (
-        title, description, course_id, created_by, total_marks, passing_marks, duration_minutes, status, questions, created_at, updated_at
+        title, description, course_id, user_id, created_by, total_marks, passing_marks, duration_minutes, status, questions, created_at, updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, NOW(), NOW())
+      VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8, $9::jsonb, NOW(), NOW())
       RETURNING assessment_id, title, description, course_id, created_by, total_marks, passing_marks, duration_minutes, status, questions, created_at`,
       [
         title.trim(),

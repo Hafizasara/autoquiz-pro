@@ -130,11 +130,12 @@ export const runSystemBootstrap = async () => {
     const assessCount = await query(`SELECT COUNT(*) as cnt FROM public.assessments`);
     if (parseInt(assessCount.rows[0]?.cnt || '0', 10) === 0) {
       await query(`
-        INSERT INTO public.assessments (title, description, course_id, created_by, total_marks, passing_marks, duration_minutes, status, questions, created_at)
+        INSERT INTO public.assessments (title, description, course_id, user_id, created_by, total_marks, passing_marks, duration_minutes, status, questions, created_at)
         VALUES (
           'Data Structures Midterm Examination 2026',
           'Comprehensive midterm assessment covering asymptotic notation, linked lists, stacks, queues, binary search trees, and graphs.',
           $1,
+          $2,
           $2,
           100,
           50,

@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import LoginView from '../views/LoginView.vue';
 import RegisterView from '../views/RegisterView.vue';
+import FacultyRegisterView from '../views/FacultyRegisterView.vue';
 import VerifyEmailView from '../views/VerifyEmailView.vue';
 import DashboardView from '../views/DashboardView.vue';
 import OAuthCallbackView from '../views/OAuthCallbackView.vue';
@@ -24,6 +25,13 @@ const routes = [
     path: '/register',
     name: 'Register',
     component: RegisterView,
+    meta: { guestOnly: true }
+  },
+  {
+    path: '/faculty-register',
+    alias: '/staff/register',
+    name: 'FacultyRegister',
+    component: FacultyRegisterView,
     meta: { guestOnly: true }
   },
   {

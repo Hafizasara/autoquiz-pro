@@ -163,10 +163,18 @@ const handleGoogleSignIn = async () => {
         </button>
 
         <div class="card-footer">
-          <span>Don't have an account?</span>
-          <router-link to="/register" class="link-bold">Register here</router-link>
+          <span>Need a student account?</span>
+          <router-link to="/register" class="link-bold">Register as Student</router-link>
         </div>
       </div>
+
+      <!-- Discreet footer for faculty & administrators -->
+      <footer class="footer-institutional">
+        <span>University Faculty or Staff?</span>
+        <router-link to="/faculty-register" class="link-institutional">
+          Faculty & Admin Portal &rarr;
+        </router-link>
+      </footer>
     </div>
   </div>
 </template>
@@ -411,5 +419,26 @@ const handleGoogleSignIn = async () => {
 
 .font-bold {
   font-weight: 700;
+}
+
+.footer-institutional {
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+
+.link-institutional {
+  color: #818cf8;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.link-institutional:hover {
+  text-decoration: underline;
 }
 </style>

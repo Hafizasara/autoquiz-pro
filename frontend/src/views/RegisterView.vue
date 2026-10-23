@@ -8,8 +8,7 @@ const router = useRouter();
 const form = ref({
   name: '',
   email: '',
-  password: '',
-  inviteCode: ''
+  password: ''
 });
 
 const isSubmitting = ref(false);
@@ -31,13 +30,11 @@ const handleRegister = async () => {
       // Student registration: verification email sent
       successMessage.value = res.data.message;
       verificationLink.value = res.data.verificationLink;
-      // Also save message to sessionStorage so Login page can display it when redirected
       sessionStorage.setItem('auth_success_msg', res.data.message);
       setTimeout(() => {
         router.push({ path: '/login', query: { registered: 'student' } });
       }, 3500);
     } else {
-      // Teacher or Admin registration: completed
       successMessage.value = res.data?.message || 'Account registered successfully! Redirecting to login...';
       sessionStorage.setItem('auth_success_msg', successMessage.value);
       setTimeout(() => {
@@ -62,18 +59,21 @@ const handleRegister = async () => {
           </svg>
         </div>
         <h1 class="app-title">AutoQuiz Pro</h1>
-        <p class="app-subtitle">Create Your Account</p>
+        <p class="app-subtitle">Student Registration</p>
       </header>
 
       <div class="auth-card glass-card">
         <div class="card-intro">
-          <h2 class="card-heading">Register Account</h2>
+          <h2 class="card-heading">Create Student Account</h2>
           <p class="card-subtext">
-            Enter your details below. Once registered, you will be redirected to the sign in page.
+            Enter your details using your official university email. Once registered, you will be redirected to the sign in page.
           </p>
         </div>
 
         <div v-if="errorMessage" class="alert alert-error">
+          <svg class="alert-icon" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+          </svg>
           <span>{{ errorMessage }}</span>
         </div>
 
@@ -81,7 +81,7 @@ const handleRegister = async () => {
           <div>
             <p>{{ successMessage }}</p>
             <div v-if="verificationLink" class="preview-verify-box">
-              <span class="preview-label">Local preview verification link:</span>
+              <span class="preview-label">Browser verification link:</span>
               <a :href="verificationLink" target="_blank" class="preview-link">
                 Click here to verify this browser now &rarr;
               </a>
@@ -102,16 +102,16 @@ const handleRegister = async () => {
           </div>
 
           <div class="form-group">
-            <label class="form-label">Email Address</label>
+            <label class="form-label">University Email Address</label>
             <input
               v-model="form.email"
               type="email"
-              placeholder="e.g. student@ptut.edu.pk or faculty@institution.edu"
+              placeholder="e.g. student@ptut.edu.pk or student@university.edu"
               required
               class="form-input"
             />
             <span class="input-hint">
-              Students must use their official university email (.edu). Faculty may use university or personal email with an invite code.
+              Must be your official university email address (.edu or registered institution domain).
             </span>
           </div>
 
@@ -132,29 +132,24 @@ const handleRegister = async () => {
             />
           </div>
 
-          <div class="form-group">
-            <label class="form-label">Invitation Code</label>
-            <input
-              v-model="form.inviteCode"
-              type="text"
-              placeholder="Enter invitation code (Required for Teachers/Admins; Leave blank if Student)"
-              class="form-input code-input"
-            />
-            <span class="input-hint">
-              Teachers and Admins must provide a one-time invitation code from their University Administrator. University students can leave this blank.
-            </span>
-          </div>
-
           <button type="submit" class="btn btn-primary btn-block" :disabled="isSubmitting">
-            {{ isSubmitting ? 'Creating Account...' : 'Register Account' }}
+            {{ isSubmitting ? 'Creating Student Account...' : 'Complete Registration' }}
           </button>
         </form>
 
         <div class="card-footer">
-          <span>Already have an account?</span>
+          <span>Already registered?</span>
           <router-link to="/login" class="link-bold">Sign In here</router-link>
         </div>
       </div>
+
+      <!-- Discreet footer for faculty & administrators -->
+      <footer class="footer-institutional">
+        <span>University Faculty or Staff?</span>
+        <router-link to="/faculty-register" class="link-institutional">
+          Faculty & Admin Portal &rarr;
+        </router-link>
+      </footer>
     </div>
   </div>
 </template>
@@ -218,34 +213,34 @@ const handleRegister = async () => {
 }
 
 .auth-card {
-  padding: 2.25rem;
+  padding: 2rem;
+  border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1.25rem;
 }
 
 .card-intro {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+  text-align: center;
 }
 
 .card-heading {
-  font-family: var(--font-heading);
-  font-size: 1.35rem;
+  font-size: 1.25rem;
   font-weight: 700;
-  color: var(--text-main);
+  color: var(--text-primary);
+  margin-bottom: 0.25rem;
 }
 
 .card-subtext {
-  font-size: 0.88rem;
-  color: var(--text-muted);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
 }
 
 .form-body {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1.1rem;
 }
 
 .form-group {
@@ -261,104 +256,143 @@ const handleRegister = async () => {
 }
 
 .form-label {
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  color: var(--text-main);
+  color: var(--text-secondary);
 }
 
 .input-hint {
   font-size: 0.75rem;
-  color: var(--text-dim);
-  line-height: 1.4;
-}
-
-.btn-link {
-  font-size: 0.8rem;
-  color: var(--accent-primary);
-  background: transparent;
+  color: var(--text-muted);
+  line-height: 1.35;
 }
 
 .form-input {
   width: 100%;
-  background: rgba(0, 0, 0, 0.4);
+  padding: 0.7rem 0.9rem;
+  border-radius: var(--radius-md);
+  background: rgba(15, 23, 42, 0.6);
   border: 1px solid var(--border-color);
-  padding: 0.8rem 1rem;
-  border-radius: var(--radius-sm);
-  color: var(--text-main);
-  font-size: 0.92rem;
+  color: var(--text-primary);
+  font-size: 0.9rem;
   outline: none;
-  transition: var(--transition);
+  transition: var(--transition-fast);
 }
 
 .form-input:focus {
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
 }
 
-.code-input {
-  font-family: monospace;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.btn-block {
-  width: 100%;
-  justify-content: center;
-  padding: 0.95rem;
-  margin-top: 0.5rem;
-}
-
-.card-footer {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-  color: var(--text-muted);
-  border-top: 1px solid var(--border-color);
-  padding-top: 1.25rem;
-}
-
-.link-bold {
+.btn-link {
+  background: none;
+  border: none;
   color: var(--accent-primary);
+  font-size: 0.8rem;
   font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.btn-link:hover {
+  text-decoration: underline;
 }
 
 .alert {
-  padding: 0.85rem 1.15rem;
-  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
   font-size: 0.85rem;
 }
 
+.alert-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
 .alert-error {
-  background: rgba(244, 63, 94, 0.12);
-  border: 1px solid rgba(244, 63, 94, 0.3);
-  color: #fb7185;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
 }
 
 .alert-success {
   background: rgba(16, 185, 129, 0.12);
   border: 1px solid rgba(16, 185, 129, 0.3);
-  color: #34d399;
+  color: #86efac;
 }
 
 .preview-verify-box {
-  margin-top: 0.75rem;
-  background: rgba(0, 0, 0, 0.3);
-  padding: 0.6rem 0.85rem;
-  border-radius: 4px;
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
 }
 
 .preview-label {
-  display: block;
-  font-size: 0.75rem;
-  color: var(--text-muted);
+  font-size: 0.72rem;
+  color: #94a3b8;
+  font-weight: 600;
 }
 
 .preview-link {
-  color: var(--accent-cyan);
-  font-weight: 600;
+  font-size: 0.8rem;
+  color: #38bdf8;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.preview-link:hover {
+  color: #7dd3fc;
+}
+
+.card-footer {
+  text-align: center;
   font-size: 0.85rem;
-  word-break: break-all;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.link-bold {
+  color: var(--accent-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.link-bold:hover {
+  text-decoration: underline;
+}
+
+.footer-institutional {
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.link-institutional {
+  color: #818cf8;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.link-institutional:hover {
+  text-decoration: underline;
 }
 </style>

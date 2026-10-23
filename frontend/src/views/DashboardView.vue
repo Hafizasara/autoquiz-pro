@@ -13,7 +13,9 @@ import {
   assignCourseTeacher,
   fetchAdminTeachers,
   uploadAdminCSV,
-  fetchTeacherCourses
+  fetchTeacherCourses,
+  fetchAdministrators,
+  createAdminUser
 } from '../api';
 
 const router = useRouter();
@@ -29,6 +31,11 @@ const invitations = ref([]);
 const usersList = ref([]);
 const coursesList = ref([]);
 const teachersList = ref([]);
+const administratorsList = ref([]);
+
+// New Admin Form State
+const newAdminForm = ref({ name: '', email: '', password: '' });
+const isCreatingAdmin = ref(false);
 
 const newInviteRole = ref('TEACHER');
 const newInviteDays = ref(30);
@@ -49,7 +56,7 @@ const csvUploadResult = ref(null);
 
 const adminErrorMessage = ref('');
 const adminSuccessMessage = ref('');
-const activeAdminTab = ref('COURSES'); // 'COURSES' | 'INVITATIONS' | 'CSV' | 'USERS'
+const activeAdminTab = ref('COURSES'); // 'COURSES' | 'ADMINS' | 'INVITATIONS' | 'CSV' | 'USERS'
 
 const handleLogout = async () => {
   await auth.logout();
@@ -83,12 +90,13 @@ const loadAdminData = async () => {
   adminErrorMessage.value = '';
 
   try {
-    const [statsRes, invitesRes, usersRes, coursesRes, teachersRes] = await Promise.all([
+    const [statsRes, invitesRes, usersRes, coursesRes, teachersRes, adminsRes] = await Promise.all([
       fetchAdminStats(auth.token.value),
       fetchInvitations(auth.token.value),
       fetchAdminUsers(auth.token.value),
       fetchAdminCourses(auth.token.value),
-      fetchAdminTeachers(auth.token.value)
+      fetchAdminTeachers(auth.token.value),
+      fetchAdministrators(auth.token.value)
     ]);
 
     stats.value = statsRes.data;
@@ -96,6 +104,7 @@ const loadAdminData = async () => {
     usersList.value = usersRes.data.users;
     coursesList.value = coursesRes.data.courses;
     teachersList.value = teachersRes.data.teachers;
+    administratorsList.value = adminsRes.data.administrators || [];
 
     // Initialize course assignment selection
     coursesList.value.forEach(c => {
@@ -103,6 +112,27 @@ const loadAdminData = async () => {
     });
   } catch (err) {
     adminErrorMessage.value = err.message || 'Failed to load administrator data';
+  }
+};
+
+const handleCreateAdmin = async () => {
+  if (!newAdminForm.value.name || !newAdminForm.value.email || !newAdminForm.value.password) {
+    adminErrorMessage.value = 'Name, email, and password are required to create an administrator.';
+    return;
+  }
+
+  isCreatingAdmin.value = true;
+  adminErrorMessage.value = '';
+
+  try {
+    const res = await createAdminUser(auth.token.value, newAdminForm.value);
+    adminSuccessMessage.value = `New administrator "${res.data.admin.name}" created successfully!`;
+    newAdminForm.value = { name: '', email: '', password: '' };
+    await loadAdminData();
+  } catch (err) {
+    adminErrorMessage.value = err.message || 'Could not create administrator';
+  } finally {
+    isCreatingAdmin.value = false;
   }
 };
 
@@ -424,6 +454,12 @@ onMounted(async () => {
             Courses & Teacher Assignment ({{ coursesList.length }})
           </button>
           <button
+            :class="['admin-tab-btn', activeAdminTab === 'ADMINS' && 'active']"
+            @click="activeAdminTab = 'ADMINS'"
+          >
+            Administrators ({{ administratorsList.length }})
+          </button>
+          <button
             :class="['admin-tab-btn', activeAdminTab === 'CSV' && 'active']"
             @click="activeAdminTab = 'CSV'"
           >
@@ -520,6 +556,89 @@ onMounted(async () => {
                         Save Assignment
                       </button>
                     </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================== -->
+        <!-- TAB: ADMINISTRATORS MANAGEMENT                 -->
+        <!-- ============================================== -->
+        <div v-if="activeAdminTab === 'ADMINS'" class="tab-pane">
+          <div class="glass-card creator-card">
+            <h3 class="section-title">Add New University Administrator</h3>
+            <p class="section-desc">
+              Create an administrator account directly or issue invitation codes for institutional co-administrators.
+            </p>
+
+            <form @submit.prevent="handleCreateAdmin" class="form-row">
+              <div class="field-item">
+                <label class="form-label">Full Name</label>
+                <input
+                  v-model="newAdminForm.name"
+                  type="text"
+                  placeholder="e.g. Dean Vance"
+                  required
+                  class="form-input"
+                />
+              </div>
+
+              <div class="field-item">
+                <label class="form-label">Admin Email</label>
+                <input
+                  v-model="newAdminForm.email"
+                  type="email"
+                  placeholder="e.g. dean@university.edu"
+                  required
+                  class="form-input"
+                />
+              </div>
+
+              <div class="field-item">
+                <label class="form-label">Password</label>
+                <input
+                  v-model="newAdminForm.password"
+                  type="password"
+                  placeholder="Min 8 characters"
+                  minlength="8"
+                  required
+                  class="form-input"
+                />
+              </div>
+
+              <button type="submit" class="btn btn-primary" :disabled="isCreatingAdmin">
+                {{ isCreatingAdmin ? 'Creating...' : '+ Create Administrator' }}
+              </button>
+            </form>
+          </div>
+
+          <!-- Existing Admins Table -->
+          <div class="glass-card table-card">
+            <div class="card-header-bar">
+              <h3 class="section-title">University Administrators Roster</h3>
+              <span class="badge-count">{{ administratorsList.length }} Registered</span>
+            </div>
+
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>User ID</th>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Status</th>
+                    <th>Joined</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="adm in administratorsList" :key="adm.user_id">
+                    <td>#{{ adm.user_id }}</td>
+                    <td class="font-bold">{{ adm.name }}</td>
+                    <td>{{ adm.email }}</td>
+                    <td><span class="badge-status badge-status-active">Active Admin</span></td>
+                    <td>{{ new Date(adm.created_at).toLocaleDateString() }}</td>
                   </tr>
                 </tbody>
               </table>

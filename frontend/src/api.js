@@ -202,3 +202,17 @@ export const uploadAdminCSV = async (token, file) => {
 
   return data;
 };
+
+export const fetchAdministrators = async (token) => {
+  return await request('/admin/administrators', {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const createAdminUser = async (token, { name, email, password }) => {
+  return await request('/admin/create-admin', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name, email, password })
+  });
+};

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import multer from 'multer';
 import { query } from '../config/supabase.js';
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js';
@@ -290,6 +291,74 @@ router.get('/stats', async (req, res, next) => {
         users: statsRes.rows[0],
         invitations: inviteStats.rows[0],
         courses: courseStats.rows[0]
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route POST /api/v1/admin/create-admin
+ * @desc Directly create an administrator account for this university
+ */
+router.post('/create-admin', async (req, res, next) => {
+  try {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ status: 'fail', message: 'Name, email, and password are required.' });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({ status: 'fail', message: 'Password must be at least 8 characters long.' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = await query('SELECT user_id FROM public.users WHERE email = $1', [normalizedEmail]);
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ status: 'fail', message: 'A user with this email address already exists.' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    const insertRes = await query(
+      `INSERT INTO public.users (name, email, password_hash, role, is_active, university_id, auth_provider, email_verified, created_at, updated_at)
+       VALUES ($1, $2, $3, 'ADMIN', TRUE, $4, 'email', TRUE, NOW(), NOW())
+       RETURNING user_id, name, email, role, university_id, created_at`,
+      [name.trim(), normalizedEmail, passwordHash, req.user.university_id]
+    );
+
+    res.status(201).json({
+      status: 'success',
+      message: 'New administrator created successfully.',
+      data: {
+        admin: insertRes.rows[0]
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route GET /api/v1/admin/administrators
+ * @desc List all administrators for this university
+ */
+router.get('/administrators', async (req, res, next) => {
+  try {
+    const admins = await query(
+      `SELECT user_id, name, email, created_at, is_active
+       FROM public.users
+       WHERE university_id = $1 AND role = 'ADMIN'
+       ORDER BY created_at ASC`,
+      [req.user.university_id]
+    );
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        administrators: admins.rows
       }
     });
   } catch (error) {

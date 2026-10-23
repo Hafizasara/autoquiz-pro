@@ -24,7 +24,7 @@ export const runSystemBootstrap = async () => {
       ALTER TABLE public.invitations ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
     `);
 
-    // Ensure Assessments Table Exists
+    // Ensure Assessments Table and all its columns exist
     await query(`
       CREATE TABLE IF NOT EXISTS public.assessments (
         assessment_id BIGSERIAL PRIMARY KEY,
@@ -40,8 +40,20 @@ export const runSystemBootstrap = async () => {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+
+      ALTER TABLE public.assessments ADD COLUMN IF NOT EXISTS title VARCHAR(255);
+      ALTER TABLE public.assessments ADD COLUMN IF NOT EXISTS description TEXT;
+      ALTER TABLE public.assessments ADD COLUMN IF NOT EXISTS course_id BIGINT;
+      ALTER TABLE public.assessments ADD COLUMN IF NOT EXISTS created_by BIGINT;
+      ALTER TABLE public.assessments ADD COLUMN IF NOT EXISTS total_marks INTEGER DEFAULT 100;
+      ALTER TABLE public.assessments ADD COLUMN IF NOT EXISTS passing_marks INTEGER DEFAULT 50;
+      ALTER TABLE public.assessments ADD COLUMN IF NOT EXISTS duration_minutes INTEGER DEFAULT 60;
+      ALTER TABLE public.assessments ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'PUBLISHED';
+      ALTER TABLE public.assessments ADD COLUMN IF NOT EXISTS questions JSONB DEFAULT '[]'::jsonb;
+      ALTER TABLE public.assessments ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+      ALTER TABLE public.assessments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
     `);
-    log.push('Assessments table verified.');
+    log.push('Assessments table and columns verified.');
 
     // 3. Hash Passwords
     const adminPasswordHash = await bcrypt.hash('AdminPassword123!', 10);

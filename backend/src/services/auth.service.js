@@ -59,7 +59,7 @@ export const findUniversityByEmailDomain = async (email) => {
 /**
  * Validate an invitation code for one-time use
  */
-export const validateInvitation = async (code, requiredRole = null) => {
+export const validateInvitation = async (code, requiredRole = null, userEmail = null) => {
   if (!code || typeof code !== 'string') {
     throw new Error('Invitation code is required.');
   }
@@ -67,7 +67,7 @@ export const validateInvitation = async (code, requiredRole = null) => {
   const cleanCode = code.trim().toUpperCase();
 
   const res = await query(
-    `SELECT i.invitation_id, i.code, i.role, i.university_id, i.created_by, i.used_by, i.expires_at, i.used_at,
+    `SELECT i.invitation_id, i.code, i.role, i.university_id, i.created_by, i.used_by, i.expires_at, i.used_at, i.target_email,
             u.name as university_name
      FROM public.invitations i
      LEFT JOIN public.universities u ON i.university_id = u.university_id
@@ -91,6 +91,12 @@ export const validateInvitation = async (code, requiredRole = null) => {
 
   if (requiredRole && invite.role !== requiredRole) {
     throw new Error(`This invitation code is for role ${invite.role}, not ${requiredRole}.`);
+  }
+
+  if (invite.target_email && userEmail) {
+    if (invite.target_email.trim().toLowerCase() !== userEmail.trim().toLowerCase()) {
+      throw new Error(`This invitation code is strictly bound to ${invite.target_email}. Please register with that email address.`);
+    }
   }
 
   return invite;
@@ -257,7 +263,7 @@ export const registerUnified = async ({ name, email, password, inviteCode, devic
 
   // CASE A: User provided an invitation code -> Teacher or Admin!
   if (inviteCode && inviteCode.trim()) {
-    const invite = await validateInvitation(inviteCode);
+    const invite = await validateInvitation(inviteCode, null, normalizedEmail);
     const assignedRole = invite.role; // 'TEACHER' or 'ADMIN'
 
     const insertRes = await query(
@@ -486,7 +492,7 @@ export const googleAuthUnified = async ({ supabaseAccessToken, inviteCode = null
   // 2. User does not exist yet -> First time registration via Google!
   // Check if invitation code provided
   if (inviteCode && inviteCode.trim()) {
-    const invite = await validateInvitation(inviteCode);
+    const invite = await validateInvitation(inviteCode, null, email);
     const assignedRole = invite.role;
 
     const insertRes = await query(

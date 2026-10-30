@@ -73,9 +73,13 @@ router.post('/login', async (req, res) => {
       data: result
     });
   } catch (error) {
-    res.status(401).json({
+    console.error('Login error details:', error);
+    const isConnError = error.message?.includes('timeout') || error.message?.includes('ETIMEDOUT') || error.code === 'ETIMEDOUT';
+    res.status(isConnError ? 503 : 401).json({
       status: 'fail',
-      message: error.message
+      message: isConnError 
+        ? 'Database connection timed out. Please check network connectivity or VPN.' 
+        : error.message
     });
   }
 });

@@ -283,17 +283,18 @@ export const assignTeacherToCourse = async (universityId, courseId, teacherId) =
 /**
  * Create a new course under a university
  */
-export const createUniversityCourse = async (universityId, { courseName, courseCode, teacherId }) => {
+export const createUniversityCourse = async (universityId, { courseName, courseCode, teacherId, departmentId }) => {
   if (!courseName) throw new Error('Course name is required.');
 
   const targetUniId = universityId || 1;
   const resolvedTeacherId = teacherId ? parseInt(teacherId, 10) : null;
+  const resolvedDeptId = departmentId ? parseInt(departmentId, 10) : null;
 
   const res = await query(
-    `INSERT INTO public.courses (university_id, course_name, course_code, user_id)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO public.courses (university_id, course_name, course_code, user_id, department_id)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
-    [targetUniId, courseName.trim(), (courseCode || '').trim().toUpperCase() || null, resolvedTeacherId]
+    [targetUniId, courseName.trim(), (courseCode || '').trim().toUpperCase() || null, resolvedTeacherId, resolvedDeptId]
   );
   return res.rows[0];
 };
@@ -308,12 +309,16 @@ export const getTeacherAssignedCourses = async (teacherId, universityId) => {
       c.course_id,
       c.course_name,
       c.course_code,
+      c.department_id,
+      d.name as department_name,
+      d.code as department_code,
       c.created_at,
       COUNT(s.student_id)::int as student_count
      FROM public.courses c
+     LEFT JOIN public.departments d ON c.department_id = d.department_id
      LEFT JOIN public.students s ON c.course_id = s.course_id
      WHERE c.user_id = $1
-     GROUP BY c.course_id, c.course_name, c.course_code, c.created_at
+     GROUP BY c.course_id, c.course_name, c.course_code, c.department_id, d.name, d.code, c.created_at
      ORDER BY c.course_id DESC`,
     [teacherId]
   );

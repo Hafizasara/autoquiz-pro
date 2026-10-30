@@ -7,14 +7,14 @@ import DashboardView from '../views/DashboardView.vue';
 import OAuthCallbackView from '../views/OAuthCallbackView.vue';
 import CreateAssessmentView from '../views/CreateAssessmentView.vue';
 import { useAuth } from '../store/auth';
+import HomeView from '../views/HomeView.vue';
 
 const routes = [
   {
     path: '/',
-    redirect: () => {
-      const auth = useAuth();
-      return auth.isAuthenticated.value ? '/dashboard' : '/login';
-    }
+    name: 'Home',
+    component: HomeView,
+
   },
   {
     path: '/login',

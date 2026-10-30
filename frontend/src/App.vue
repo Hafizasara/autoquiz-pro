@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted } from 'vue';
 import { useAuth } from './store/auth';
+import Navbar from './components/Navbar.vue';
 
 const auth = useAuth();
 
@@ -11,6 +12,7 @@ onMounted(async () => {
 
 <template>
   <div class="app-root">
+    <Navbar />
     <router-view />
   </div>
 </template>

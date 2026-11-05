@@ -4,6 +4,15 @@ import { useRouter } from 'vue-router';
 import { useAuth } from '../store/auth';
 import {
   fetchTeacherCourses,
+  fetchTeacherOverview,
+  createTeacherCourse,
+  publishAssessment,
+  revertAssessmentDraft,
+  deleteDraftAssessment,
+  reviewStudentAttempt,
+  createQuizExport,
+  retryAiFailure,
+  dismissAiFailure,
   fetchAdminTeachers,
   updateTeacherStatus,
   updateTeacherApproval,
@@ -40,9 +49,48 @@ import {
 const router = useRouter();
 const auth = useAuth();
 
-// Teacher State
+// Teacher Complete State
 const teacherCourses = ref([]);
+const teacherDrafts = ref([]);
+const teacherPublished = ref([]);
+const teacherReviewQueue = ref([]);
+const teacherFlaggedCount = ref(0);
+const teacherExports = ref([]);
+const teacherAiFailures = ref([]);
+const teacherDepartments = ref([]);
+const educatorDashboardStats = ref({
+  coursesCount: 0,
+  draftsCount: 0,
+  publishedCount: 0,
+  waitingReviewCount: 0,
+  flaggedCount: 0,
+  recentExportsCount: 0,
+  aiFailuresCount: 0
+});
 const teacherLoading = ref(true);
+const teacherActiveTab = ref('COURSES'); // 'COURSES' | 'DRAFTS' | 'PUBLISHED' | 'REVIEWS' | 'EXPORTS_AI'
+const reviewFilter = ref('ALL'); // 'ALL' | 'FLAGGED'
+
+// Teacher Modals & Action States
+const showTeacherNewCourseModal = ref(false);
+const teacherNewCourseForm = ref({ courseName: '', courseCode: '', departmentId: '' });
+const isCreatingTeacherCourse = ref(false);
+
+const showReviewAttemptModal = ref(false);
+const selectedReviewAttempt = ref(null);
+const reviewForm = ref({ score: 0, feedback: '', clearFlag: true });
+const isSubmittingReview = ref(false);
+
+const showExportQuizModal = ref(false);
+const exportForm = ref({ assessmentTitle: '', format: 'PDF', courseCode: 'CRS' });
+const isCreatingExport = ref(false);
+
+const showInspectQuizModal = ref(false);
+const selectedInspectQuiz = ref(null);
+
+const retryingFailureId = ref(null);
+const isPublishingDraftId = ref(null);
+const teacherToast = ref('');
 
 // Admin Messages & Notifications
 const adminErrorMessage = ref('');
@@ -1095,17 +1143,185 @@ const handleLogout = async () => {
   router.push('/login');
 };
 
-// Load Teacher Assigned Courses (for Educator role)
+// Load Teacher Assigned Courses & Complete Overview (for Educator role)
 const loadTeacherData = async () => {
   teacherLoading.value = true;
   try {
-    const res = await fetchTeacherCourses(auth.token.value);
-    teacherCourses.value = res.data?.courses || [];
+    const res = await fetchTeacherOverview(auth.token.value);
+    const data = res.data || {};
+    teacherCourses.value = data.courses || [];
+    teacherDrafts.value = data.drafts || [];
+    teacherPublished.value = data.published || [];
+    teacherReviewQueue.value = data.reviewQueue || [];
+    teacherFlaggedCount.value = data.flaggedCount || 0;
+    teacherExports.value = data.recentExports || [];
+    teacherAiFailures.value = data.recentAiFailures || [];
+    teacherDepartments.value = data.departments || [];
+    if (data.stats) {
+      educatorDashboardStats.value = data.stats;
+    }
   } catch (err) {
-    console.error('Error fetching teacher courses:', err);
+    console.warn('Error fetching teacher overview, falling back to courses:', err);
+    try {
+      const fallback = await fetchTeacherCourses(auth.token.value);
+      teacherCourses.value = fallback.data?.courses || [];
+    } catch (cErr) {
+      console.error('Error fetching teacher fallback courses:', cErr);
+    }
   } finally {
     teacherLoading.value = false;
   }
+};
+
+const filteredReviewQueue = computed(() => {
+  if (reviewFilter.value === 'FLAGGED') {
+    return teacherReviewQueue.value.filter(a => a.is_flagged);
+  }
+  return teacherReviewQueue.value;
+});
+
+const handleCreateTeacherCourse = async () => {
+  if (!teacherNewCourseForm.value.courseName) return;
+  isCreatingTeacherCourse.value = true;
+  try {
+    const res = await createTeacherCourse(auth.token.value, teacherNewCourseForm.value);
+    triggerCopyToast(res.message || 'Course created successfully!');
+    teacherNewCourseForm.value = { courseName: '', courseCode: '', departmentId: '' };
+    showTeacherNewCourseModal.value = false;
+    await loadTeacherData();
+  } catch (err) {
+    triggerCopyToast(err.message || 'Failed to create course.');
+  } finally {
+    isCreatingTeacherCourse.value = false;
+  }
+};
+
+const handlePublishDraft = async (assessmentId) => {
+  isPublishingDraftId.value = assessmentId;
+  try {
+    const res = await publishAssessment(auth.token.value, assessmentId);
+    triggerCopyToast(res.message || 'Assessment published successfully!');
+    await loadTeacherData();
+  } catch (err) {
+    triggerCopyToast(err.message || 'Failed to publish assessment.');
+  } finally {
+    isPublishingDraftId.value = null;
+  }
+};
+
+const handleRevertToDraft = async (assessmentId) => {
+  try {
+    const res = await revertAssessmentDraft(auth.token.value, assessmentId);
+    triggerCopyToast(res.message || 'Quiz moved to Draft status.');
+    await loadTeacherData();
+  } catch (err) {
+    triggerCopyToast(err.message || 'Failed to revert quiz.');
+  }
+};
+
+const handleDeleteDraft = async (assessmentId) => {
+  if (!confirm('Are you sure you want to discard this draft assessment?')) return;
+  try {
+    const res = await deleteDraftAssessment(auth.token.value, assessmentId);
+    triggerCopyToast(res.message || 'Draft discarded.');
+    await loadTeacherData();
+  } catch (err) {
+    triggerCopyToast(err.message || 'Failed to delete draft.');
+  }
+};
+
+const openReviewModal = (attempt) => {
+  selectedReviewAttempt.value = attempt;
+  reviewForm.value = {
+    score: attempt.score,
+    feedback: attempt.teacher_notes || '',
+    clearFlag: true
+  };
+  showReviewAttemptModal.value = true;
+};
+
+const handleFinalizeReview = async () => {
+  if (!selectedReviewAttempt.value) return;
+  isSubmittingReview.value = true;
+  try {
+    const res = await reviewStudentAttempt(
+      auth.token.value,
+      selectedReviewAttempt.value.attempt_id,
+      reviewForm.value
+    );
+    triggerCopyToast(res.message || 'Student attempt reviewed and grade released.');
+    showReviewAttemptModal.value = false;
+    selectedReviewAttempt.value = null;
+    await loadTeacherData();
+  } catch (err) {
+    triggerCopyToast(err.message || 'Failed to finalize review.');
+  } finally {
+    isSubmittingReview.value = false;
+  }
+};
+
+const openExportModal = (quiz = null) => {
+  exportForm.value = {
+    assessmentTitle: quiz ? quiz.title : (teacherPublished.value[0]?.title || 'Curriculum Assessment Paper'),
+    format: 'PDF',
+    courseCode: quiz?.course_code || 'CRS'
+  };
+  showExportQuizModal.value = true;
+};
+
+const handleGenerateExport = async () => {
+  isCreatingExport.value = true;
+  try {
+    const res = await createQuizExport(auth.token.value, exportForm.value);
+    triggerCopyToast(res.message || 'Export generated successfully!');
+    
+    // Trigger download in browser
+    const content = `AutoQuiz Pro Export Package\nTitle: ${exportForm.value.assessmentTitle}\nFormat: ${exportForm.value.format}\nGenerated At: ${new Date().toLocaleString()}\nInstitution: ${auth.user.value?.universityName || 'PTUT'}\nTeacher: ${auth.user.value?.name}\n`;
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${exportForm.value.assessmentTitle.toLowerCase().replace(/[^a-z0-9]/g, '-')}.${exportForm.value.format.toLowerCase()}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    showExportQuizModal.value = false;
+    await loadTeacherData();
+  } catch (err) {
+    triggerCopyToast(err.message || 'Failed to generate export.');
+  } finally {
+    isCreatingExport.value = false;
+  }
+};
+
+const handleRetryAiFailure = async (failureId) => {
+  retryingFailureId.value = failureId;
+  try {
+    const res = await retryAiFailure(auth.token.value, failureId);
+    triggerCopyToast(res.message || 'AI task retried successfully.');
+    await loadTeacherData();
+  } catch (err) {
+    triggerCopyToast(err.message || 'Retry failed.');
+  } finally {
+    retryingFailureId.value = null;
+  }
+};
+
+const handleDismissAiFailure = async (failureId) => {
+  try {
+    const res = await dismissAiFailure(auth.token.value, failureId);
+    triggerCopyToast(res.message || 'AI alert dismissed.');
+    await loadTeacherData();
+  } catch (err) {
+    triggerCopyToast(err.message || 'Failed to dismiss alert.');
+  }
+};
+
+const openInspectQuizModal = (quiz) => {
+  selectedInspectQuiz.value = quiz;
+  showInspectQuizModal.value = true;
 };
 
 onMounted(async () => {
@@ -1196,18 +1412,54 @@ onMounted(async () => {
 
         <!-- TEACHER nav -->
         <template v-if="auth.isTeacher.value">
-          <button :class="['sidebar-nav-item', activeSection === 'dashboard' && 'active']" @click="activeSection = 'dashboard'">
+          <button :class="['sidebar-nav-item', activeSection === 'dashboard' && teacherActiveTab === 'COURSES' && 'active']" @click="activeSection = 'dashboard'; teacherActiveTab = 'COURSES'">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
               <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
               <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
             </svg>
             <span v-if="!sidebarCollapsed">Overview</span>
           </button>
-          <button :class="['sidebar-nav-item', activeSection === 'courses' && 'active']" @click="activeSection = 'courses'">
+          <button :class="['sidebar-nav-item', (activeSection === 'courses' || (activeSection === 'dashboard' && teacherActiveTab === 'COURSES')) && 'active']" @click="activeSection = 'dashboard'; teacherActiveTab = 'COURSES'">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
               <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
             </svg>
             <span v-if="!sidebarCollapsed">My Courses</span>
+            <span v-if="!sidebarCollapsed && teacherCourses.length > 0" class="sidebar-badge-count sidebar-badge-blue">{{ teacherCourses.length }}</span>
+          </button>
+          <button :class="['sidebar-nav-item', activeSection === 'dashboard' && teacherActiveTab === 'DRAFTS' && 'active']" @click="activeSection = 'dashboard'; teacherActiveTab = 'DRAFTS'">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+            </svg>
+            <span v-if="!sidebarCollapsed">Draft Assessments</span>
+            <span v-if="!sidebarCollapsed && teacherDrafts.length > 0" class="sidebar-badge-count">{{ teacherDrafts.length }}</span>
+          </button>
+          <button :class="['sidebar-nav-item', activeSection === 'dashboard' && teacherActiveTab === 'PUBLISHED' && 'active']" @click="activeSection = 'dashboard'; teacherActiveTab = 'PUBLISHED'">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
+              <circle cx="12" cy="12" r="10"/>
+              <polygon points="10 8 16 12 10 16 10 8"/>
+            </svg>
+            <span v-if="!sidebarCollapsed">Published Quizzes</span>
+            <span v-if="!sidebarCollapsed && teacherPublished.length > 0" class="sidebar-badge-count sidebar-badge-blue">{{ teacherPublished.length }}</span>
+          </button>
+          <button :class="['sidebar-nav-item', activeSection === 'dashboard' && teacherActiveTab === 'REVIEWS' && 'active']" @click="activeSection = 'dashboard'; teacherActiveTab = 'REVIEWS'">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
+              <path d="M9 11l3 3L22 4"/>
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+            </svg>
+            <span v-if="!sidebarCollapsed">Review Submissions</span>
+            <span v-if="!sidebarCollapsed && teacherFlaggedCount > 0" class="sidebar-badge-count text-danger" title="Flagged attempts">{{ teacherFlaggedCount }} ⚠️</span>
+          </button>
+          <button :class="['sidebar-nav-item', activeSection === 'dashboard' && teacherActiveTab === 'EXPORTS_AI' && 'active']" @click="activeSection = 'dashboard'; teacherActiveTab = 'EXPORTS_AI'">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            <span v-if="!sidebarCollapsed">Exports &amp; AI Health</span>
+            <span v-if="!sidebarCollapsed && teacherAiFailures.filter(f => f.status !== 'RESOLVED').length > 0" class="sidebar-badge-count text-amber">!</span>
           </button>
           <router-link to="/assessments/create" class="sidebar-nav-item">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
@@ -1372,54 +1624,840 @@ onMounted(async () => {
       <!-- VIEW 2: TEACHER DASHBOARD                     -->
       <!-- ============================================== -->
       <section v-if="auth.isTeacher.value" class="role-view">
+        <!-- Banner Card -->
         <div class="glass-card banner-card">
           <div class="badge badge-info">
             <span class="badge-dot"></span> {{ auth.user.value?.universityName || 'Academic Faculty' }}
           </div>
           <h2 class="banner-title">Educator Studio &bull; {{ auth.user.value?.name }}</h2>
           <p class="banner-text">
-            Registered with your university invitation code. Course access and exam generation are configured below.
+            Manage your courses, draft &amp; published assessments, review student submissions with proctoring flags, export evaluation packages, and monitor AI generation health.
           </p>
         </div>
 
-        <!-- Blank State -->
-        <div v-if="!teacherLoading && teacherCourses.length === 0" class="glass-card empty-dashboard-card">
-          <div class="empty-icon-circle">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
-              <path d="M6 6h10M6 10h10"/>
-              <circle cx="12" cy="16" r="1.5"/>
-            </svg>
+        <!-- Shortcuts Bar: New Course, New Assessment, Quick Export, Review Queue -->
+        <div class="glass-card quick-action-bar">
+          <div class="quick-action-info">
+            <h4 class="quick-action-title">Educator Action Shortcuts</h4>
+            <p class="quick-action-sub">Quickly launch new courses, design assessments, export test papers, or clear pending reviews.</p>
           </div>
-          <span class="badge badge-warning"><span class="badge-dot"></span> Pending Course Assignment</span>
-          <h3 class="empty-title">No Courses Assigned Yet</h3>
-          <p class="empty-desc">
-            You have successfully registered with <strong>{{ auth.user.value?.universityName || 'your university' }}</strong>, but your Administrator has not assigned courses to your profile yet.
-          </p>
-          <button class="btn btn-secondary" @click="loadTeacherData">Refresh Course Allocations</button>
+          <div class="quick-action-buttons">
+            <button class="btn btn-primary btn-sm" @click="showTeacherNewCourseModal = true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              + New Course
+            </button>
+            <router-link to="/assessments/create" class="btn btn-primary btn-sm">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+              </svg>
+              + New Assessment
+            </router-link>
+            <button class="btn btn-secondary btn-sm" @click="openExportModal()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Quick Export
+            </button>
+            <button class="btn btn-secondary btn-sm" @click="teacherActiveTab = 'REVIEWS'">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
+                <path d="M9 11l3 3L22 4"/>
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+              </svg>
+              Reviews ({{ teacherReviewQueue.length }})
+              <span v-if="teacherFlaggedCount > 0" class="badge-mini-danger ml-1">{{ teacherFlaggedCount }} Flagged</span>
+            </button>
+          </div>
         </div>
 
-        <!-- Active Courses State -->
-        <div v-else-if="!teacherLoading && teacherCourses.length > 0" class="assigned-courses-section">
+        <!-- Metric Stat Cards -->
+        <div class="grid-cards">
+          <div class="glass-card stat-card" @click="teacherActiveTab = 'COURSES'">
+            <div class="stat-number text-blue">{{ educatorDashboardStats.coursesCount }}</div>
+            <div class="stat-label">My Courses</div>
+            <p class="stat-hint">Assigned &amp; created curriculum classes</p>
+          </div>
+
+          <div class="glass-card stat-card" @click="teacherActiveTab = 'DRAFTS'">
+            <div class="stat-number text-amber">{{ educatorDashboardStats.draftsCount }}</div>
+            <div class="stat-label">Draft Assessments</div>
+            <p class="stat-hint">Saved internally for educator revision</p>
+          </div>
+
+          <div class="glass-card stat-card" @click="teacherActiveTab = 'PUBLISHED'">
+            <div class="stat-number text-success">{{ educatorDashboardStats.publishedCount }}</div>
+            <div class="stat-label">Published Quizzes</div>
+            <p class="stat-hint">Live &amp; active tests available to students</p>
+          </div>
+
+          <div class="glass-card stat-card" @click="teacherActiveTab = 'REVIEWS'">
+            <div class="stat-number" :class="{ 'text-danger': educatorDashboardStats.flaggedCount > 0 }">
+              {{ educatorDashboardStats.waitingReviewCount }}
+            </div>
+            <div class="stat-label">Waiting for Review</div>
+            <p class="stat-hint">
+              <span v-if="educatorDashboardStats.flaggedCount > 0" class="text-danger font-bold">⚠️ {{ educatorDashboardStats.flaggedCount }} flagged</span>
+              <span v-else>0 flagged for integrity</span>
+              &bull; Needs grade release
+            </p>
+          </div>
+        </div>
+
+        <!-- Teacher Navigation Tabs -->
+        <div class="admin-tabs mt-4">
+          <button
+            :class="['admin-tab-btn', teacherActiveTab === 'COURSES' && 'active']"
+            @click="teacherActiveTab = 'COURSES'"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
+              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+            </svg>
+            My Courses ({{ teacherCourses.length }})
+          </button>
+          <button
+            :class="['admin-tab-btn', teacherActiveTab === 'DRAFTS' && 'active']"
+            @click="teacherActiveTab = 'DRAFTS'"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+            Draft Assessments ({{ teacherDrafts.length }})
+          </button>
+          <button
+            :class="['admin-tab-btn', teacherActiveTab === 'PUBLISHED' && 'active']"
+            @click="teacherActiveTab = 'PUBLISHED'"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
+              <circle cx="12" cy="12" r="10"/>
+              <polygon points="10 8 16 12 10 16 10 8"/>
+            </svg>
+            Published Quizzes ({{ teacherPublished.length }})
+          </button>
+          <button
+            :class="['admin-tab-btn', teacherActiveTab === 'REVIEWS' && 'active']"
+            @click="teacherActiveTab = 'REVIEWS'"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
+              <path d="M9 11l3 3L22 4"/>
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+            </svg>
+            Waiting Review ({{ teacherReviewQueue.length }})
+            <span v-if="teacherFlaggedCount > 0" class="badge-mini-danger">⚠️ {{ teacherFlaggedCount }} Flagged</span>
+          </button>
+          <button
+            :class="['admin-tab-btn', teacherActiveTab === 'EXPORTS_AI' && 'active']"
+            @click="teacherActiveTab = 'EXPORTS_AI'"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Exports &amp; AI Failures ({{ teacherExports.length }})
+            <span v-if="teacherAiFailures.filter(f => f.status !== 'RESOLVED').length > 0" class="badge-mini-amber">
+              {{ teacherAiFailures.filter(f => f.status !== 'RESOLVED').length }} AI Alerts
+            </span>
+          </button>
+        </div>
+
+        <!-- ============================================== -->
+        <!-- TAB 1: MY COURSES                              -->
+        <!-- ============================================== -->
+        <div v-if="teacherActiveTab === 'COURSES'" class="tab-content-panel mt-3">
           <div class="section-top-row">
             <div>
-              <h3 class="section-title">Your Assigned Courses ({{ teacherCourses.length }})</h3>
-              <p class="section-desc">Courses assigned to you by your administrator.</p>
+              <h3 class="section-title">My Courses ({{ teacherCourses.length }})</h3>
+              <p class="section-desc">Curriculum modules assigned to you or created under your educator profile.</p>
             </div>
-            <button class="btn btn-secondary btn-sm" @click="loadTeacherData">Refresh</button>
+            <div class="action-btn-group">
+              <button class="btn btn-primary btn-sm" @click="showTeacherNewCourseModal = true">
+                + New Course
+              </button>
+              <button class="btn btn-secondary btn-sm" @click="loadTeacherData">
+                Refresh
+              </button>
+            </div>
           </div>
 
-          <div class="grid-cards">
+          <!-- Empty Courses State -->
+          <div v-if="!teacherLoading && teacherCourses.length === 0" class="glass-card empty-dashboard-card">
+            <div class="empty-icon-circle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+                <path d="M6 6h10M6 10h10"/>
+              </svg>
+            </div>
+            <h3 class="empty-title">No Courses Assigned Yet</h3>
+            <p class="empty-desc">
+              You haven't been assigned any courses yet. Use the <strong>+ New Course</strong> shortcut above to register a course.
+            </p>
+            <button class="btn btn-primary" @click="showTeacherNewCourseModal = true">+ Create New Course</button>
+          </div>
+
+          <!-- Active Courses Grid -->
+          <div v-else-if="teacherCourses.length > 0" class="grid-cards">
             <div v-for="c in teacherCourses" :key="c.course_id" class="glass-card course-card">
               <div class="course-header">
                 <span class="course-badge">{{ c.course_code || 'CRS' }}</span>
-                <span class="student-count">{{ c.student_count }} Students</span>
+                <span class="student-count">{{ c.student_count || 0 }} Students</span>
               </div>
               <h4 class="course-name">{{ c.course_name }}</h4>
-              <p class="course-meta">Assigned curriculum module</p>
+              <p class="course-meta">{{ c.department_name || 'Academic Department' }}</p>
               <div class="course-actions">
-                <router-link to="/assessments/create" class="btn btn-primary btn-block btn-sm">+ Create / Generate Assessment</router-link>
-                <router-link to="/assessments" class="btn btn-secondary btn-block btn-sm">View Assessment Registry</router-link>
+                <router-link
+                  :to="`/assessments/create?courseId=${c.course_id}`"
+                  class="btn btn-primary btn-block btn-sm"
+                >
+                  + Create Assessment for Course
+                </router-link>
+                <button
+                  class="btn btn-secondary btn-block btn-sm"
+                  @click="openCourseRosterModal(c)"
+                >
+                  Inspect Enrolled Roster
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================== -->
+        <!-- TAB 2: DRAFT ASSESSMENTS                       -->
+        <!-- ============================================== -->
+        <div v-if="teacherActiveTab === 'DRAFTS'" class="tab-content-panel mt-3">
+          <div class="section-top-row">
+            <div>
+              <h3 class="section-title">Draft Assessments ({{ teacherDrafts.length }})</h3>
+              <p class="section-desc">Assessments saved as drafts. Publish when ready to make them live for student participation.</p>
+            </div>
+            <router-link to="/assessments/create" class="btn btn-primary btn-sm">
+              + New Assessment Draft
+            </router-link>
+          </div>
+
+          <!-- Empty Drafts -->
+          <div v-if="teacherDrafts.length === 0" class="glass-card empty-dashboard-card">
+            <div class="empty-icon-circle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+            </div>
+            <h3 class="empty-title">No Draft Assessments</h3>
+            <p class="empty-desc">You do not have any pending assessment drafts. Start generating new assessments with AI assistance.</p>
+            <router-link to="/assessments/create" class="btn btn-primary">+ Create Assessment</router-link>
+          </div>
+
+          <!-- Drafts Table -->
+          <div v-else class="table-responsive glass-card p-0">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Title &amp; Module</th>
+                  <th>Questions</th>
+                  <th>Total Marks</th>
+                  <th>Duration</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="d in teacherDrafts" :key="d.assessment_id">
+                  <td>
+                    <div class="course-name-cell">
+                      <div class="course-main-name font-bold">{{ d.title }}</div>
+                      <span class="code-mono course-code-badge">{{ d.course_code || 'CRS' }}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="badge badge-info">{{ Array.isArray(d.questions) ? d.questions.length : (d.questions ? JSON.parse(d.questions || '[]').length : 0) }} Questions</span>
+                  </td>
+                  <td>{{ d.total_marks || 100 }} pts</td>
+                  <td>{{ d.duration_minutes || 60 }} mins</td>
+                  <td>
+                    <span class="badge badge-warning">
+                      <span class="badge-dot"></span> Draft
+                    </span>
+                  </td>
+                  <td class="cell-date">{{ formatDate(d.created_at) }}</td>
+                  <td class="text-right">
+                    <div class="action-btn-group justify-end">
+                      <button
+                        class="btn btn-primary btn-xs"
+                        :disabled="isPublishingDraftId === d.assessment_id"
+                        @click="handlePublishDraft(d.assessment_id)"
+                        title="Publish and make live for students"
+                      >
+                        <span v-if="isPublishingDraftId === d.assessment_id">Publishing...</span>
+                        <span v-else>🚀 Publish Quiz</span>
+                      </button>
+                      <button
+                        class="btn btn-outline-danger btn-xs"
+                        @click="handleDeleteDraft(d.assessment_id)"
+                        title="Discard draft"
+                      >
+                        Discard
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ============================================== -->
+        <!-- TAB 3: PUBLISHED QUIZZES                       -->
+        <!-- ============================================== -->
+        <div v-if="teacherActiveTab === 'PUBLISHED'" class="tab-content-panel mt-3">
+          <div class="section-top-row">
+            <div>
+              <h3 class="section-title">Published Quizzes ({{ teacherPublished.length }})</h3>
+              <p class="section-desc">Live and scheduled assessments currently active for students.</p>
+            </div>
+            <div class="action-btn-group">
+              <button class="btn btn-secondary btn-sm" @click="openExportModal()">
+                📥 Export Exam Paper
+              </button>
+              <router-link to="/assessments/create" class="btn btn-primary btn-sm">
+                + New Assessment
+              </router-link>
+            </div>
+          </div>
+
+          <!-- Empty Published -->
+          <div v-if="teacherPublished.length === 0" class="glass-card empty-dashboard-card">
+            <div class="empty-icon-circle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <circle cx="12" cy="12" r="10"/>
+                <polygon points="10 8 16 12 10 16 10 8"/>
+              </svg>
+            </div>
+            <h3 class="empty-title">No Published Quizzes Yet</h3>
+            <p class="empty-desc">You do not have any published quizzes live yet. Publish a draft or create a new assessment.</p>
+            <router-link to="/assessments/create" class="btn btn-primary">+ Create &amp; Publish</router-link>
+          </div>
+
+          <!-- Published Table -->
+          <div v-else class="table-responsive glass-card p-0">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Quiz Title &amp; Module</th>
+                  <th>Questions</th>
+                  <th>Marks (Passing / Total)</th>
+                  <th>Duration</th>
+                  <th>Status</th>
+                  <th>Published Date</th>
+                  <th class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="p in teacherPublished" :key="p.assessment_id">
+                  <td>
+                    <div class="course-name-cell">
+                      <div class="course-main-name font-bold">{{ p.title }}</div>
+                      <span class="code-mono course-code-badge">{{ p.course_code || 'CRS' }}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="badge badge-info">{{ Array.isArray(p.questions) ? p.questions.length : (p.questions ? JSON.parse(p.questions || '[]').length : 0) }} Items</span>
+                  </td>
+                  <td>{{ p.passing_marks || 50 }} / {{ p.total_marks || 100 }} pts</td>
+                  <td>{{ p.duration_minutes || 60 }} mins</td>
+                  <td>
+                    <span class="badge badge-success">
+                      <span class="badge-dot"></span> Live
+                    </span>
+                  </td>
+                  <td class="cell-date">{{ formatDate(p.created_at) }}</td>
+                  <td class="text-right">
+                    <div class="action-btn-group justify-end">
+                      <button
+                        class="btn btn-secondary btn-xs"
+                        @click="openInspectQuizModal(p)"
+                        title="Preview quiz details & questions"
+                      >
+                        Inspect
+                      </button>
+                      <button
+                        class="btn btn-secondary btn-xs"
+                        @click="openExportModal(p)"
+                        title="Export assessment"
+                      >
+                        Export
+                      </button>
+                      <button
+                        class="btn btn-outline-amber btn-xs"
+                        @click="handleRevertToDraft(p.assessment_id)"
+                        title="Revert to Draft for revisions"
+                      >
+                        Revert Draft
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ============================================== -->
+        <!-- TAB 4: ATTEMPTS WAITING FOR REVIEW (WITH FLAGGED)-->
+        <!-- ============================================== -->
+        <div v-if="teacherActiveTab === 'REVIEWS'" class="tab-content-panel mt-3">
+          <div class="section-top-row">
+            <div>
+              <h3 class="section-title">
+                Student Attempts Waiting for Review ({{ teacherReviewQueue.length }})
+              </h3>
+              <p class="section-desc">
+                Submissions requiring educator evaluation, subjective scoring, or academic integrity review.
+              </p>
+            </div>
+            <div class="action-btn-group">
+              <button
+                :class="['btn btn-xs', reviewFilter === 'ALL' ? 'btn-primary' : 'btn-secondary']"
+                @click="reviewFilter = 'ALL'"
+              >
+                All Pending ({{ teacherReviewQueue.length }})
+              </button>
+              <button
+                :class="['btn btn-xs', reviewFilter === 'FLAGGED' ? 'btn-danger' : 'btn-secondary']"
+                @click="reviewFilter = 'FLAGGED'"
+              >
+                ⚠️ Flagged Only ({{ teacherFlaggedCount }})
+              </button>
+            </div>
+          </div>
+
+          <!-- Flagged Alert Banner -->
+          <div v-if="teacherFlaggedCount > 0" class="alert alert-warning mb-3">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="alert-icon">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <div>
+              <strong>Academic Integrity Notice:</strong>
+              {{ teacherFlaggedCount }} attempt(s) have been flagged for proctoring anomalies (window tab switching, lockdown exit, or paste events). Review before releasing final scores.
+            </div>
+          </div>
+
+          <!-- Empty Reviews -->
+          <div v-if="filteredReviewQueue.length === 0" class="glass-card empty-dashboard-card">
+            <div class="empty-icon-circle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <path d="M22 4L12 14.01l-3-3"/>
+              </svg>
+            </div>
+            <h3 class="empty-title">All Submissions Reviewed!</h3>
+            <p class="empty-desc">There are no student attempts waiting for your review matching the current filter.</p>
+            <button class="btn btn-secondary" @click="reviewFilter = 'ALL'">Show All Attempts</button>
+          </div>
+
+          <!-- Reviews Table -->
+          <div v-else class="table-responsive glass-card p-0">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Student &amp; Roll Number</th>
+                  <th>Assessment &amp; Course</th>
+                  <th>Submitted At</th>
+                  <th>Score / Marks</th>
+                  <th>Integrity &amp; Flag Status</th>
+                  <th class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="att in filteredReviewQueue" :key="att.attempt_id">
+                  <td>
+                    <div class="student-name font-bold">{{ att.student_name }}</div>
+                    <span class="code-mono text-xs">{{ att.roll_number }}</span>
+                  </td>
+                  <td>
+                    <div>{{ att.assessment_title }}</div>
+                    <span class="code-mono course-code-badge">{{ att.course_code }}</span>
+                  </td>
+                  <td class="cell-date">{{ formatDate(att.submitted_at) }}</td>
+                  <td>
+                    <strong>{{ att.score }}</strong> / {{ att.total_marks }}
+                  </td>
+                  <td>
+                    <div v-if="att.is_flagged" class="badge-mini-danger font-bold">
+                      ⚠️ Flagged: {{ att.flag_reasons[0] || 'Integrity anomaly detected' }}
+                    </div>
+                    <div v-else class="badge badge-info">
+                      <span class="badge-dot"></span> Awaiting Subjective Review
+                    </div>
+                  </td>
+                  <td class="text-right">
+                    <button class="btn btn-primary btn-xs" @click="openReviewModal(att)">
+                      Review &amp; Grade
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ============================================== -->
+        <!-- TAB 5: RECENT EXPORTS AND RECENT AI FAILURES   -->
+        <!-- ============================================== -->
+        <div v-if="teacherActiveTab === 'EXPORTS_AI'" class="tab-content-panel mt-3">
+          <div class="dashboard-overview-grid">
+            <!-- Left Column: Recent Exports -->
+            <div class="glass-card overview-card">
+              <div class="overview-card-header">
+                <div>
+                  <h3 class="overview-card-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="title-icon">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                      <polyline points="7 10 12 15 17 10"/>
+                      <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    Recent Assessment &amp; Grade Exports ({{ teacherExports.length }})
+                  </h3>
+                  <p class="overview-card-sub">Export assessment papers, printable answer sheets, and student gradebooks.</p>
+                </div>
+                <button class="btn btn-primary btn-xs" @click="openExportModal()">+ New Export</button>
+              </div>
+
+              <div v-if="teacherExports.length === 0" class="empty-state-mini">
+                <p>No exports generated yet.</p>
+              </div>
+
+              <div v-else class="table-responsive">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Title</th>
+                      <th>Format</th>
+                      <th>Size</th>
+                      <th>Date</th>
+                      <th class="text-right">Download</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="exp in teacherExports" :key="exp.export_id">
+                      <td>
+                        <div class="font-bold text-sm">{{ exp.title }}</div>
+                      </td>
+                      <td>
+                        <span :class="['badge', exp.format === 'PDF' ? 'badge-danger' : (exp.format === 'CSV' ? 'badge-success' : 'badge-info')]">
+                          {{ exp.format }}
+                        </span>
+                      </td>
+                      <td class="text-xs">{{ exp.file_size }}</td>
+                      <td class="cell-date">{{ formatDate(exp.created_at) }}</td>
+                      <td class="text-right">
+                        <button class="btn btn-secondary btn-xs" @click="handleGenerateExport()">
+                          Download
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Right Column: Recent AI Failures & Health -->
+            <div class="glass-card overview-card">
+              <div class="overview-card-header">
+                <div>
+                  <h3 class="overview-card-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="title-icon text-amber">
+                      <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                    </svg>
+                    Recent AI Failures &amp; Health
+                  </h3>
+                  <p class="overview-card-sub">Monitors Gemini AI question generation, rate limits, and auto-marking issues.</p>
+                </div>
+                <span :class="['badge', teacherAiFailures.filter(f => f.status !== 'RESOLVED').length > 0 ? 'badge-warning' : 'badge-success']">
+                  {{ teacherAiFailures.filter(f => f.status !== 'RESOLVED').length > 0 ? 'Action Required' : 'All Systems Normal' }}
+                </span>
+              </div>
+
+              <div v-if="teacherAiFailures.length === 0" class="empty-state-mini text-center p-4">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="empty-mini-icon text-success">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                  <path d="M22 4L12 14.01l-3-3"/>
+                </svg>
+                <p class="text-success font-bold mt-2">Zero AI Generation Failures</p>
+                <span class="text-xs text-muted">Gemini 1.5 Flash is operating at 100% capacity.</span>
+              </div>
+
+              <div v-else class="ai-failures-list">
+                <div
+                  v-for="fail in teacherAiFailures"
+                  :key="fail.failure_id"
+                  :class="['ai-failure-card', fail.status === 'RESOLVED' && 'resolved']"
+                >
+                  <div class="ai-failure-header">
+                    <div>
+                      <span class="badge badge-info">{{ fail.feature }}</span>
+                      <span class="code-mono ml-2 text-xs">{{ fail.model }}</span>
+                    </div>
+                    <span :class="['status-pill', fail.status === 'RESOLVED' ? 'status-active' : 'status-inactive']">
+                      {{ fail.status }}
+                    </span>
+                  </div>
+                  <div class="ai-failure-topic font-bold mt-1">{{ fail.prompt_topic }}</div>
+                  <p class="ai-failure-msg">{{ fail.error_message }}</p>
+                  <div class="ai-failure-footer">
+                    <span class="text-xs text-muted">{{ formatDate(fail.created_at) }}</span>
+                    <div class="action-btn-group">
+                      <button
+                        v-if="fail.status !== 'RESOLVED'"
+                        class="btn btn-primary btn-xs"
+                        :disabled="retryingFailureId === fail.failure_id"
+                        @click="handleRetryAiFailure(fail.failure_id)"
+                      >
+                        <span v-if="retryingFailureId === fail.failure_id">Retrying...</span>
+                        <span v-else>🔄 Retry with AI</span>
+                      </button>
+                      <button
+                        class="btn btn-secondary btn-xs"
+                        @click="handleDismissAiFailure(fail.failure_id)"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================= -->
+        <!-- MODAL 1: CREATE NEW COURSE (SHORTCUT)                         -->
+        <!-- ============================================================= -->
+        <div v-if="showTeacherNewCourseModal" class="modal-overlay" @click.self="showTeacherNewCourseModal = false">
+          <div class="modal-card">
+            <div class="modal-header">
+              <div class="modal-title-wrap">
+                <h3 class="modal-title">+ Create New Course Shortcut</h3>
+                <p class="modal-subtitle">Register a new curriculum course assigned directly to your faculty profile.</p>
+              </div>
+              <button class="modal-close-btn" @click="showTeacherNewCourseModal = false">&times;</button>
+            </div>
+            <form @submit.prevent="handleCreateTeacherCourse" class="modal-body">
+              <div class="form-grid">
+                <div class="field-item flex-2">
+                  <label class="field-label">Course Name *</label>
+                  <input
+                    type="text"
+                    v-model="teacherNewCourseForm.courseName"
+                    class="input-control"
+                    placeholder="e.g. Advanced Artificial Intelligence"
+                    required
+                  />
+                </div>
+                <div class="field-item flex-1">
+                  <label class="field-label">Course Code</label>
+                  <input
+                    type="text"
+                    v-model="teacherNewCourseForm.courseCode"
+                    class="input-control uppercase"
+                    placeholder="e.g. AI-401"
+                  />
+                </div>
+              </div>
+              <div class="form-grid mt-3">
+                <div class="field-item flex-1">
+                  <label class="field-label">Academic Department</label>
+                  <select v-model="teacherNewCourseForm.departmentId" class="select-control">
+                    <option value="">Select Department (Optional)...</option>
+                    <option v-for="d in teacherDepartments" :key="d.department_id" :value="String(d.department_id)">
+                      {{ d.name }} ({{ d.code }})
+                    </option>
+                  </select>
+                </div>
+              </div>
+              <div class="modal-footer mt-4">
+                <button type="submit" class="btn btn-primary" :disabled="isCreatingTeacherCourse">
+                  <span v-if="isCreatingTeacherCourse">Creating Course...</span>
+                  <span v-else>Register &amp; Assign to Me</span>
+                </button>
+                <button type="button" class="btn btn-secondary" @click="showTeacherNewCourseModal = false">Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- ============================================================= -->
+        <!-- MODAL 2: REVIEW STUDENT ATTEMPT                               -->
+        <!-- ============================================================= -->
+        <div v-if="showReviewAttemptModal && selectedReviewAttempt" class="modal-overlay" @click.self="showReviewAttemptModal = false">
+          <div class="modal-card">
+            <div class="modal-header">
+              <div class="modal-title-wrap">
+                <h3 class="modal-title">Review Student Submission</h3>
+                <p class="modal-subtitle">
+                  {{ selectedReviewAttempt.student_name }} ({{ selectedReviewAttempt.roll_number }}) &bull; {{ selectedReviewAttempt.assessment_title }}
+                </p>
+              </div>
+              <button class="modal-close-btn" @click="showReviewAttemptModal = false">&times;</button>
+            </div>
+            <form @submit.prevent="handleFinalizeReview" class="modal-body">
+              <!-- Flag Warning Notice -->
+              <div v-if="selectedReviewAttempt.is_flagged" class="alert alert-warning mb-3">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="alert-icon">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <div>
+                  <strong>Proctoring Events Flagged:</strong>
+                  <ul class="mt-1 pl-3 text-xs">
+                    <li v-for="(r, idx) in selectedReviewAttempt.flag_reasons" :key="idx">{{ r }}</li>
+                  </ul>
+                </div>
+              </div>
+
+              <!-- Student Response Preview -->
+              <div class="field-item mt-2">
+                <label class="field-label">Student Submitted Answers / Subjective Synthesis</label>
+                <div class="p-3 bg-gray-50 rounded border text-sm text-gray-800 leading-relaxed">
+                  {{ selectedReviewAttempt.student_response }}
+                </div>
+              </div>
+
+              <!-- Scoring & Notes Form -->
+              <div class="form-grid mt-3">
+                <div class="field-item flex-1">
+                  <label class="field-label">Total Score Awarded (out of {{ selectedReviewAttempt.total_marks }}) *</label>
+                  <input
+                    type="number"
+                    v-model="reviewForm.score"
+                    min="0"
+                    :max="selectedReviewAttempt.total_marks"
+                    class="input-control"
+                    required
+                  />
+                </div>
+                <div class="field-item flex-2">
+                  <label class="field-label">Educator Feedback &amp; Rubric Notes</label>
+                  <input
+                    type="text"
+                    v-model="reviewForm.feedback"
+                    class="input-control"
+                    placeholder="e.g. Excellent explanation of RSA encryption. Minor notation error."
+                  />
+                </div>
+              </div>
+
+              <div class="form-grid mt-3">
+                <label class="checkbox-label flex items-center gap-2 text-sm">
+                  <input type="checkbox" v-model="reviewForm.clearFlag" />
+                  Clear integrity flags and release final grade to student portal
+                </label>
+              </div>
+
+              <div class="modal-footer mt-4">
+                <button type="submit" class="btn btn-primary" :disabled="isSubmittingReview">
+                  <span v-if="isSubmittingReview">Submitting Review...</span>
+                  <span v-else>Approve &amp; Release Grade</span>
+                </button>
+                <button type="button" class="btn btn-secondary" @click="showReviewAttemptModal = false">Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- ============================================================= -->
+        <!-- MODAL 3: EXPORT QUIZ MODAL                                    -->
+        <!-- ============================================================= -->
+        <div v-if="showExportQuizModal" class="modal-overlay" @click.self="showExportQuizModal = false">
+          <div class="modal-card">
+            <div class="modal-header">
+              <div class="modal-title-wrap">
+                <h3 class="modal-title">Export Assessment Package</h3>
+                <p class="modal-subtitle">Generate downloadable examination papers or student gradebook rosters.</p>
+              </div>
+              <button class="modal-close-btn" @click="showExportQuizModal = false">&times;</button>
+            </div>
+            <form @submit.prevent="handleGenerateExport" class="modal-body">
+              <div class="field-item">
+                <label class="field-label">Assessment Title *</label>
+                <input
+                  type="text"
+                  v-model="exportForm.assessmentTitle"
+                  class="input-control"
+                  required
+                />
+              </div>
+
+              <div class="form-grid mt-3">
+                <div class="field-item flex-1">
+                  <label class="field-label">Export Format *</label>
+                  <select v-model="exportForm.format" class="select-control" required>
+                    <option value="PDF">Printable Exam Paper (PDF)</option>
+                    <option value="CSV">Student Marks &amp; Gradebook (CSV)</option>
+                    <option value="DOCX">Microsoft Word Package (DOCX)</option>
+                    <option value="MOODLE">LMS / Moodle XML Package</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="modal-footer mt-4">
+                <button type="submit" class="btn btn-primary" :disabled="isCreatingExport">
+                  <span v-if="isCreatingExport">Generating Package...</span>
+                  <span v-else>📥 Generate &amp; Download</span>
+                </button>
+                <button type="button" class="btn btn-secondary" @click="showExportQuizModal = false">Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- ============================================================= -->
+        <!-- MODAL 4: INSPECT QUIZ PREVIEW                                 -->
+        <!-- ============================================================= -->
+        <div v-if="showInspectQuizModal && selectedInspectQuiz" class="modal-overlay" @click.self="showInspectQuizModal = false">
+          <div class="modal-card">
+            <div class="modal-header">
+              <div class="modal-title-wrap">
+                <h3 class="modal-title">{{ selectedInspectQuiz.title }}</h3>
+                <p class="modal-subtitle">
+                  {{ selectedInspectQuiz.course_code || 'CRS' }} &bull; {{ selectedInspectQuiz.duration_minutes }} mins &bull; {{ selectedInspectQuiz.total_marks }} marks
+                </p>
+              </div>
+              <button class="modal-close-btn" @click="showInspectQuizModal = false">&times;</button>
+            </div>
+            <div class="modal-body">
+              <div class="badge badge-success mb-3">
+                <span class="badge-dot"></span> Status: {{ selectedInspectQuiz.status }}
+              </div>
+              <h4 class="text-sm font-bold mb-2">Curriculum Questions &amp; Items:</h4>
+              <div class="questions-preview-list">
+                <div
+                  v-for="(q, idx) in (Array.isArray(selectedInspectQuiz.questions) ? selectedInspectQuiz.questions : JSON.parse(selectedInspectQuiz.questions || '[]'))"
+                  :key="idx"
+                  class="p-3 mb-2 rounded bg-gray-50 border text-sm"
+                >
+                  <div class="font-bold">Q{{ idx + 1 }}: {{ q.question || q.title }}</div>
+                  <div v-if="q.options" class="mt-2 pl-3 text-xs text-gray-700">
+                    <div v-for="(opt, oIdx) in q.options" :key="oIdx" class="py-0.5">
+                      &bull; {{ opt }}
+                    </div>
+                  </div>
+                  <div v-if="q.answer || q.correctAnswer" class="mt-2 text-xs text-success font-bold">
+                    Correct Key: {{ q.answer || q.correctAnswer }}
+                  </div>
+                </div>
+              </div>
+              <div class="modal-footer mt-4">
+                <button type="button" class="btn btn-primary" @click="openExportModal(selectedInspectQuiz)">
+                  Export This Paper
+                </button>
+                <button type="button" class="btn btn-secondary" @click="showInspectQuizModal = false">Close</button>
               </div>
             </div>
           </div>
@@ -4027,6 +5065,132 @@ onMounted(async () => {
   padding: 0.15rem 0.45rem;
   border-radius: 999px;
   font-weight: 700;
+}
+
+.badge-mini-danger {
+  background: #fee2e2;
+  color: #b91c1c;
+  font-size: 0.72rem;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.badge-danger {
+  background: #fee2e2;
+  color: #b91c1c;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+}
+
+.btn-outline-amber {
+  background: transparent;
+  color: #b45309;
+  border: 1px solid #f59e0b;
+}
+
+.btn-outline-amber:hover {
+  background: #fef3c7;
+}
+
+.btn-outline-danger {
+  background: transparent;
+  color: #dc2626;
+  border: 1px solid #ef4444;
+}
+
+.btn-outline-danger:hover {
+  background: #fee2e2;
+}
+
+.ai-failures-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ai-failure-card {
+  padding: 0.95rem;
+  background: #fff;
+  border: 1px solid #fecaca;
+  border-left: 4px solid #ef4444;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  transition: var(--transition-fast);
+}
+
+.ai-failure-card.resolved {
+  border-color: #bbf7d0;
+  border-left-color: #22c55e;
+  background: #f0fdf4;
+}
+
+.ai-failure-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ai-failure-topic {
+  font-size: 0.88rem;
+  color: var(--text-main);
+  margin-top: 0.35rem;
+}
+
+.ai-failure-msg {
+  font-size: 0.8rem;
+  color: #b91c1c;
+  margin: 0.35rem 0;
+  line-height: 1.45;
+}
+
+.ai-failure-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--border-light);
+}
+
+.text-danger {
+  color: #dc2626 !important;
+}
+
+.text-amber {
+  color: #d97706 !important;
+}
+
+.text-muted {
+  color: #64748b;
+}
+
+.text-xs {
+  font-size: 0.75rem;
+}
+
+.font-bold {
+  font-weight: 700;
+}
+
+.justify-end {
+  justify-content: flex-end;
+}
+
+.empty-mini-icon {
+  width: 32px;
+  height: 32px;
+  margin: 0 auto;
+}
+
+.questions-preview-list {
+  max-height: 320px;
+  overflow-y: auto;
 }
 
 /* Dashboard Overview Preview Layout */

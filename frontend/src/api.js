@@ -119,6 +119,71 @@ export const fetchTeacherCourses = async (token) => {
   });
 };
 
+export const fetchTeacherOverview = async (token) => {
+  return await request('/teacher/overview', {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const createTeacherCourse = async (token, courseData) => {
+  return await request('/teacher/courses', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(courseData)
+  });
+};
+
+export const publishAssessment = async (token, assessmentId) => {
+  return await request(`/teacher/assessments/${assessmentId}/publish`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const revertAssessmentDraft = async (token, assessmentId) => {
+  return await request(`/teacher/assessments/${assessmentId}/revert-draft`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const deleteDraftAssessment = async (token, assessmentId) => {
+  return await request(`/teacher/assessments/${assessmentId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const reviewStudentAttempt = async (token, attemptId, reviewData) => {
+  return await request(`/teacher/attempts/${attemptId}/review`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(reviewData)
+  });
+};
+
+export const createQuizExport = async (token, exportData) => {
+  return await request('/teacher/exports', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(exportData)
+  });
+};
+
+export const retryAiFailure = async (token, failureId) => {
+  return await request(`/teacher/ai-failures/${failureId}/retry`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const dismissAiFailure = async (token, failureId) => {
+  return await request(`/teacher/ai-failures/${failureId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ADMIN API - Complete Admin Portal Functions
 // ═══════════════════════════════════════════════════════════════════════════════

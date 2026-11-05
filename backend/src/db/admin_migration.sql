@@ -24,6 +24,12 @@ DO $$ BEGIN
 END $$;
 
 DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='approval_status') THEN
+    ALTER TABLE public.users ADD COLUMN approval_status VARCHAR(20) DEFAULT 'approved';
+  END IF;
+END $$;
+
+DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='courses' AND column_name='department_id') THEN
     ALTER TABLE public.courses ADD COLUMN department_id INTEGER REFERENCES public.departments(department_id) ON DELETE SET NULL;
   END IF;

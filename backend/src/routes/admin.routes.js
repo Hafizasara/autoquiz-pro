@@ -148,7 +148,7 @@ router.get('/teachers', async (req, res, next) => {
                       ), '[]'::json) as courses
                FROM public.users u
                LEFT JOIN public.departments d ON u.department_id = d.department_id
-               WHERE (u.university_id = $1 OR u.university_id IS NULL) AND u.role = 'TEACHER'`;
+               WHERE (u.university_id = $1 OR u.university_id IS NULL) AND (u.role = 'TEACHER' OR UPPER(u.role) = 'TEACHER')`;
     const params = [uniId];
 
     if (search) {
@@ -976,7 +976,23 @@ router.put('/departments/:id', async (req, res, next) => {
 router.delete('/departments/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
+    const { permanent } = req.query;
     const uniId = req.user.university_id || 1;
+
+    if (permanent === 'true') {
+      await query(`UPDATE public.courses SET department_id = NULL WHERE department_id = $1`, [id]);
+      await query(`UPDATE public.users SET department_id = NULL WHERE department_id = $1`, [id]);
+      const delRes = await query(`DELETE FROM public.departments WHERE department_id = $1 AND university_id = $2 RETURNING *`, [id, uniId]);
+      if (delRes.rows.length === 0) {
+        return res.status(404).json({ status: 'fail', message: 'Department not found.' });
+      }
+      await logAudit(req, 'DELETE_DEPARTMENT_PERMANENT', 'DEPARTMENT', id, { name: delRes.rows[0]?.name });
+      return res.status(200).json({
+        status: 'success',
+        message: `Department "${delRes.rows[0]?.name}" permanently deleted.`
+      });
+    }
+
     // Count related entities
     const userCountRes = await query(`SELECT COUNT(*)::int AS cnt FROM public.users WHERE department_id = $1`, [id]);
     const courseCountRes = await query(`SELECT COUNT(*)::int AS cnt FROM public.courses WHERE department_id = $1`, [id]);
@@ -1045,7 +1061,7 @@ router.get('/departments/:id/members', async (req, res, next) => {
        LEFT JOIN public.courses c ON c.user_id = u.user_id
        WHERE (u.department_id = $1 OR c.department_id = $1)
          AND (u.university_id = $2 OR u.university_id IS NULL)
-         AND u.role = 'TEACHER'
+         AND (u.role = 'TEACHER' OR UPPER(u.role) = 'TEACHER')
        ORDER BY u.name ASC`,
       [id, uniId]
     );
@@ -1342,6 +1358,142 @@ router.get('/courses/:id/roster', async (req, res, next) => {
         } : null,
         students: studentsRes.rows
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route PUT /api/v1/admin/courses/:id
+ * @desc Full course update: name, code, teacher, department, status
+ */
+router.put('/courses/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { courseName, courseCode, teacherId, departmentId, status: courseStatus } = req.body;
+    const uniId = req.user.university_id || 1;
+
+    const checkRes = await query(
+      `SELECT * FROM public.courses WHERE course_id = $1 AND (university_id = $2 OR university_id IS NULL)`,
+      [id, uniId]
+    );
+    if (checkRes.rows.length === 0) {
+      return res.status(404).json({ status: 'fail', message: 'Course not found.' });
+    }
+
+    const cur = checkRes.rows[0];
+    const newName = courseName !== undefined ? courseName.trim() : cur.course_name;
+    const newCode = courseCode !== undefined ? (courseCode ? courseCode.trim().toUpperCase() : null) : cur.course_code;
+    const newTeacherId = teacherId !== undefined ? (teacherId ? parseInt(teacherId, 10) : null) : cur.user_id;
+    const newDeptId = departmentId !== undefined ? (departmentId ? parseInt(departmentId, 10) : null) : cur.department_id;
+    const newStatus = courseStatus !== undefined ? courseStatus : cur.status;
+
+    const result = await query(
+      `UPDATE public.courses 
+       SET course_name = $1, course_code = $2, user_id = $3, department_id = $4, status = $5
+       WHERE course_id = $6 AND (university_id = $7 OR university_id IS NULL)
+       RETURNING *`,
+      [newName, newCode, newTeacherId, newDeptId, newStatus, id, uniId]
+    );
+
+    await logAudit(req, 'UPDATE_COURSE', 'COURSE', id, {
+      courseName: newName, courseCode: newCode, teacherId: newTeacherId, departmentId: newDeptId, status: newStatus
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Course updated successfully.',
+      data: { course: result.rows[0] }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route POST /api/v1/admin/courses/:id/enroll
+ * @desc Enroll student by email into this course
+ */
+router.post('/courses/:id/enroll', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { email, name } = req.body;
+    const uniId = req.user.university_id || 1;
+
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ status: 'fail', message: 'Valid student email is required.' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const courseRes = await query(
+      `SELECT course_id, course_name FROM public.courses WHERE course_id = $1 AND (university_id = $2 OR university_id IS NULL)`,
+      [id, uniId]
+    );
+    if (courseRes.rows.length === 0) {
+      return res.status(404).json({ status: 'fail', message: 'Course not found.' });
+    }
+
+    const existRes = await query(
+      `SELECT student_id FROM public.students WHERE LOWER(email) = $1 AND course_id = $2`,
+      [normalizedEmail, id]
+    );
+    if (existRes.rows.length > 0) {
+      return res.status(400).json({ status: 'fail', message: 'Student is already enrolled in this course.' });
+    }
+
+    let studentName = name?.trim();
+    if (!studentName) {
+      const uRes = await query(`SELECT name FROM public.users WHERE LOWER(email) = $1`, [normalizedEmail]);
+      studentName = uRes.rows[0]?.name || normalizedEmail.split('@')[0];
+    }
+
+    const insertRes = await query(
+      `INSERT INTO public.students (email, name, course_id, university_id)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [normalizedEmail, studentName, id, uniId]
+    );
+
+    await logAudit(req, 'ENROLL_STUDENT', 'COURSE', id, { email: normalizedEmail, name: studentName });
+
+    res.status(201).json({
+      status: 'success',
+      message: `Enrolled ${studentName} (${normalizedEmail}) into course.`,
+      data: { enrollment: insertRes.rows[0] }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route DELETE /api/v1/admin/courses/:id/students/:studentId
+ * @desc Remove student enrollment from this course
+ */
+router.delete('/courses/:id/students/:studentId', async (req, res, next) => {
+  try {
+    const { id, studentId } = req.params;
+
+    const deleteRes = await query(
+      `DELETE FROM public.students WHERE student_id = $1 AND course_id = $2 RETURNING *`,
+      [studentId, id]
+    );
+
+    if (deleteRes.rows.length === 0) {
+      return res.status(404).json({ status: 'fail', message: 'Enrollment record not found.' });
+    }
+
+    await logAudit(req, 'UNENROLL_STUDENT', 'COURSE', id, {
+      student_id: studentId,
+      student_email: deleteRes.rows[0].email
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Student removed from course roster.',
+      data: { deletedStudent: deleteRes.rows[0] }
     });
   } catch (error) {
     next(error);

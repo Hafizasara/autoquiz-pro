@@ -290,8 +290,8 @@ export const updateDepartment = async (token, id, data) => {
   });
 };
 
-export const deleteDepartment = async (token, id) => {
-  return await request(`/admin/departments/${id}`, {
+export const deleteDepartment = async (token, id, permanent = false) => {
+  return await request(`/admin/departments/${id}${permanent ? '?permanent=true' : ''}`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` }
   });
@@ -315,6 +315,14 @@ export const fetchAdminCourses = async (token, params = {}) => {
 export const createAdminCourse = async (token, data) => {
   return await request('/admin/courses', {
     method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data)
+  });
+};
+
+export const updateAdminCourse = async (token, courseId, data) => {
+  return await request(`/admin/courses/${courseId}`, {
+    method: 'PUT',
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(data)
   });
@@ -353,6 +361,21 @@ export const deleteCourse = async (token, courseId) => {
 
 export const fetchCourseRoster = async (token, courseId) => {
   return await request(`/admin/courses/${courseId}/roster`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const enrollStudentInCourse = async (token, courseId, data) => {
+  return await request(`/admin/courses/${courseId}/enroll`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data)
+  });
+};
+
+export const unenrollStudentFromCourse = async (token, courseId, studentId) => {
+  return await request(`/admin/courses/${courseId}/students/${studentId}`, {
+    method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` }
   });
 };

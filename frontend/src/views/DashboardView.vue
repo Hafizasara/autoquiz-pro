@@ -27,11 +27,14 @@ import {
   mergeStudentAccounts,
   fetchAdminCourses,
   createAdminCourse,
+  updateAdminCourse,
   assignCourseTeacher,
   updateCourseDepartment,
   updateCourseStatus,
   deleteCourse,
-  fetchCourseRoster
+  fetchCourseRoster,
+  enrollStudentInCourse,
+  unenrollStudentFromCourse
 } from '../api';
 
 const router = useRouter();
@@ -137,6 +140,7 @@ const editingDeptId = ref(null);
 const editDeptForm = ref({ name: '', code: '', status: 'active' });
 const isUpdatingDept = ref(false);
 const deptSearch = ref('');
+const deptStatusFilter = ref('ALL'); // 'ALL' | 'active' | 'archived'
 
 // Courses management
 const isLoadingCourses = ref(false);
@@ -151,15 +155,26 @@ const assigningCourseId = ref(null);
 const selectedCourseTeacher = ref({});
 const selectedCourseDept = ref({});
 
+// Edit Course Modal State
+const showEditCourseModal = ref(false);
+const editCourseForm = ref({ course_id: null, courseName: '', courseCode: '', teacherId: '', departmentId: '', status: 'active' });
+const isUpdatingCourse = ref(false);
+
 // Roster Modals State
 const showDeptModal = ref(false);
 const selectedDeptMembers = ref(null);
 const isLoadingDeptMembers = ref(false);
 const deptModalTab = ref('teachers'); // 'teachers' | 'students' | 'courses'
+const deptAssignTeacherId = ref('');
+const isAssigningDeptTeacher = ref(false);
 
 const showCourseModal = ref(false);
 const selectedCourseRoster = ref(null);
 const isLoadingCourseRoster = ref(false);
+const showEnrollStudentForm = ref(false);
+const enrollStudentForm = ref({ email: '', name: '' });
+const isEnrollingStudent = ref(false);
+const isUnenrollingStudentId = ref(null);
 
 // Enhanced Cross-Filtering
 const teacherCourseFilter = ref('ALL');
@@ -299,6 +314,9 @@ const filteredDepartments = computed(() => {
     if (deptSearch.value) {
       const q = deptSearch.value.toLowerCase();
       if (!d.name?.toLowerCase().includes(q) && !d.code?.toLowerCase().includes(q)) return false;
+    }
+    if (deptStatusFilter.value !== 'ALL') {
+      if (d.status !== deptStatusFilter.value) return false;
     }
     return true;
   });
@@ -737,6 +755,37 @@ const handleArchiveDepartment = async (dept) => {
   }
 };
 
+const handleToggleDeptStatus = async (dept) => {
+  const newStatus = dept.status === 'active' ? 'archived' : 'active';
+  try {
+    const res = await updateDepartment(auth.token.value, dept.department_id, {
+      name: dept.name,
+      code: dept.code,
+      status: newStatus
+    });
+    showSuccess(res.message || `Department ${newStatus === 'active' ? 'restored' : 'archived'}.`);
+    await loadDepartmentsList();
+  } catch (err) {
+    showError(err.message || 'Failed to update department status.');
+  }
+};
+
+const handleDeleteDepartmentPermanent = async (dept) => {
+  const confirmed = confirm(
+    `PERMANENTLY DELETE department "${dept.name}" (${dept.code})?\n\nThis will permanently remove the department record. Any assigned courses and teachers will be unlinked safely.\n\nContinue?`
+  );
+  if (!confirmed) return;
+  try {
+    const res = await deleteDepartment(auth.token.value, dept.department_id, true);
+    showSuccess(res.message || 'Department permanently deleted.');
+    await loadDepartmentsList();
+    await loadCoursesList();
+    await loadTeachers();
+  } catch (err) {
+    showError(err.message || 'Failed to permanently delete department.');
+  }
+};
+
 // ============================================================================
 // COURSE MANAGEMENT HANDLERS
 // ============================================================================
@@ -762,6 +811,47 @@ const handleCreateCourse = async () => {
     showError(err.message || 'Failed to create course.');
   } finally {
     isCreatingCourse.value = false;
+  }
+};
+
+const startEditCourse = (course) => {
+  editCourseForm.value = {
+    course_id: course.course_id,
+    courseName: course.course_name,
+    courseCode: course.course_code || '',
+    teacherId: course.teacher_id ? String(course.teacher_id) : '',
+    departmentId: course.department_id ? String(course.department_id) : '',
+    status: course.status || 'active'
+  };
+  showEditCourseModal.value = true;
+};
+
+const cancelEditCourse = () => {
+  showEditCourseModal.value = false;
+  editCourseForm.value = { course_id: null, courseName: '', courseCode: '', teacherId: '', departmentId: '', status: 'active' };
+};
+
+const handleUpdateCourse = async () => {
+  if (!editCourseForm.value.courseName) {
+    showError('Course name is required.');
+    return;
+  }
+  isUpdatingCourse.value = true;
+  try {
+    const res = await updateAdminCourse(auth.token.value, editCourseForm.value.course_id, {
+      courseName: editCourseForm.value.courseName.trim(),
+      courseCode: editCourseForm.value.courseCode.trim() || undefined,
+      teacherId: editCourseForm.value.teacherId || null,
+      departmentId: editCourseForm.value.departmentId || null,
+      status: editCourseForm.value.status
+    });
+    showSuccess(res.message || 'Course updated successfully!');
+    showEditCourseModal.value = false;
+    await loadCoursesList();
+  } catch (err) {
+    showError(err.message || 'Failed to update course.');
+  } finally {
+    isUpdatingCourse.value = false;
   }
 };
 
@@ -809,6 +899,93 @@ const handleDeleteCourse = async (course) => {
     await loadCoursesList();
   } catch (err) {
     showError(err.message || 'Failed to delete course.');
+  }
+};
+
+const handleEnrollStudentInModal = async () => {
+  if (!enrollStudentForm.value.email || !enrollStudentForm.value.email.includes('@')) {
+    showError('Please enter a valid student email address.');
+    return;
+  }
+  isEnrollingStudent.value = true;
+  try {
+    const res = await enrollStudentInCourse(
+      auth.token.value,
+      selectedCourseRoster.value.course.course_id,
+      {
+        email: enrollStudentForm.value.email.trim(),
+        name: enrollStudentForm.value.name.trim() || undefined
+      }
+    );
+    showSuccess(res.message || 'Student enrolled successfully!');
+    enrollStudentForm.value = { email: '', name: '' };
+    showEnrollStudentForm.value = false;
+    const rosterRes = await fetchCourseRoster(auth.token.value, selectedCourseRoster.value.course.course_id);
+    selectedCourseRoster.value = rosterRes.data;
+    await loadCoursesList();
+  } catch (err) {
+    showError(err.message || 'Failed to enroll student.');
+  } finally {
+    isEnrollingStudent.value = false;
+  }
+};
+
+const handleUnenrollStudentInModal = async (student) => {
+  const confirmed = confirm(
+    `Unenroll student "${student.user_name || student.enrolled_name || student.email}" from course "${selectedCourseRoster.value?.course?.course_name}"?`
+  );
+  if (!confirmed) return;
+  isUnenrollingStudentId.value = student.student_id;
+  try {
+    const res = await unenrollStudentFromCourse(
+      auth.token.value,
+      selectedCourseRoster.value.course.course_id,
+      student.student_id
+    );
+    showSuccess(res.message || 'Student unenrolled from course.');
+    const rosterRes = await fetchCourseRoster(auth.token.value, selectedCourseRoster.value.course.course_id);
+    selectedCourseRoster.value = rosterRes.data;
+    await loadCoursesList();
+  } catch (err) {
+    showError(err.message || 'Failed to unenroll student.');
+  } finally {
+    isUnenrollingStudentId.value = null;
+  }
+};
+
+const handleAssignTeacherToDeptInModal = async () => {
+  if (!deptAssignTeacherId.value || !selectedDeptMembers.value?.department?.department_id) {
+    showError('Please select a teacher to assign to this department.');
+    return;
+  }
+  isAssigningDeptTeacher.value = true;
+  try {
+    await updateTeacherDepartment(auth.token.value, deptAssignTeacherId.value, selectedDeptMembers.value.department.department_id);
+    showSuccess('Teacher assigned to department successfully.');
+    deptAssignTeacherId.value = '';
+    const res = await fetchDepartmentMembers(auth.token.value, selectedDeptMembers.value.department.department_id);
+    selectedDeptMembers.value = res.data;
+    await loadDepartmentsList();
+    await loadTeachers();
+  } catch (err) {
+    showError(err.message || 'Failed to assign teacher.');
+  } finally {
+    isAssigningDeptTeacher.value = false;
+  }
+};
+
+const handleRemoveTeacherFromDeptInModal = async (teacher) => {
+  const confirmed = confirm(`Remove ${teacher.name} from department "${selectedDeptMembers.value?.department?.name}"?`);
+  if (!confirmed) return;
+  try {
+    await updateTeacherDepartment(auth.token.value, teacher.user_id, null);
+    showSuccess(`Removed ${teacher.name} from department.`);
+    const res = await fetchDepartmentMembers(auth.token.value, selectedDeptMembers.value.department.department_id);
+    selectedDeptMembers.value = res.data;
+    await loadDepartmentsList();
+    await loadTeachers();
+  } catch (err) {
+    showError(err.message || 'Failed to remove teacher from department.');
   }
 };
 
@@ -1326,106 +1503,7 @@ onMounted(async () => {
           </div>
         </div>
 
-        <!-- Primary Admin Horizontal Navigation Tabs (Always Visible Across All Views) -->
-        <div class="admin-tabs">
-          <button
-            :class="['admin-tab-btn', activeSection === 'departments' && 'active']"
-            @click="activeSection = 'departments'"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
-              <path d="M3 21h18M3 7v14M21 7v14M6 21V11M10 21V11M14 21V11M18 21V11M12 3l9 4H3l9-4z"/>
-            </svg>
-            <span>Departments</span>
-            <span class="badge-mini-count">{{ deptStats.total }}</span>
-          </button>
 
-          <button
-            :class="['admin-tab-btn', activeSection === 'courses' && 'active']"
-            @click="activeSection = 'courses'"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
-              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
-              <path d="M6 6h10M6 10h10"/>
-            </svg>
-            <span>Courses &amp; Allocation</span>
-            <span class="badge-mini-count">{{ courseStats.total }}</span>
-            <span v-if="courseStats.unassigned > 0" class="badge-mini-amber" title="Unassigned courses">{{ courseStats.unassigned }} unassigned</span>
-          </button>
-
-          <button
-            :class="['admin-tab-btn', activeSection === 'teachers' && 'active']"
-            @click="activeSection = 'teachers'; activeTab = 'TEACHERS'"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-              <circle cx="9" cy="7" r="4"/>
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-            </svg>
-            <span>Teachers Directory</span>
-            <span class="badge-mini-count">{{ teacherStats.total }}</span>
-            <span v-if="teacherStats.pending > 0" class="badge-mini-amber">{{ teacherStats.pending }} pending</span>
-          </button>
-
-          <button
-            :class="['admin-tab-btn', activeSection === 'students' && 'active']"
-            @click="activeSection = 'students'; activeTab = 'STUDENTS'"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-              <circle cx="12" cy="7" r="4"/>
-            </svg>
-            <span>Active Students</span>
-            <span class="badge-mini-count">{{ studentStats.total }}</span>
-          </button>
-
-          <button
-            :class="['admin-tab-btn', activeSection === 'invitations' && 'active']"
-            @click="activeSection = 'invitations'; activeTab = 'REGISTRY'"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
-              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-              <line x1="16" y1="2" x2="16" y2="6"/>
-              <line x1="8" y1="2" x2="8" y2="6"/>
-              <line x1="3" y1="10" x2="21" y2="10"/>
-            </svg>
-            <span>Invitations</span>
-            <span class="badge-mini-count">{{ inviteStats.total }}</span>
-          </button>
-
-          <button
-            :class="['admin-tab-btn', activeSection === 'bulk' && 'active']"
-            @click="activeSection = 'bulk'; activeTab = 'BULK'"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-            </svg>
-            <span>Bulk Invite</span>
-          </button>
-
-          <button
-            :class="['admin-tab-btn', activeSection === 'transfer' && 'active']"
-            @click="activeSection = 'transfer'; activeTab = 'TRANSFER'"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
-              <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
-              <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
-            </svg>
-            <span>Transfer Workload</span>
-          </button>
-
-          <button
-            :class="['admin-tab-btn', activeSection === 'dashboard' && 'active']"
-            @click="activeSection = 'dashboard'"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
-              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-              <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
-            </svg>
-            <span>Overview &amp; Stats</span>
-          </button>
-        </div>
 
         <!-- Dashboard Overview: Quick Action Shortcuts & Live Previews -->
         <div v-if="activeSection === 'dashboard'" class="dashboard-overview-container">
@@ -1650,6 +1728,12 @@ onMounted(async () => {
               <button v-if="deptSearch" class="btn-clear" @click="deptSearch = ''">&times;</button>
             </div>
             <div class="filter-group">
+              <select v-model="deptStatusFilter" class="select-control">
+                <option value="ALL">All Statuses</option>
+                <option value="active">Active Only</option>
+                <option value="archived">Archived Only</option>
+              </select>
+
               <button class="btn btn-secondary btn-sm" @click="loadDepartmentsList" :disabled="isLoadingDepts">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
                   <path d="M23 4v6h-6M1 20v-6h6"/>
@@ -1758,9 +1842,18 @@ onMounted(async () => {
                           Edit
                         </button>
 
-                        <!-- Archive Button -->
-                        <button v-if="dept.status === 'active'" class="btn btn-outline-danger btn-xs" @click="handleArchiveDepartment(dept)" title="Archive department">
-                          Archive
+                        <!-- Toggle Archive / Restore -->
+                        <button
+                          :class="['btn btn-xs', dept.status === 'active' ? 'btn-outline-warning' : 'btn-outline-success']"
+                          @click="handleToggleDeptStatus(dept)"
+                          :title="dept.status === 'active' ? 'Archive department' : 'Restore department'"
+                        >
+                          {{ dept.status === 'active' ? 'Archive' : 'Restore' }}
+                        </button>
+
+                        <!-- Delete Button -->
+                        <button class="btn btn-outline-danger btn-xs" @click="handleDeleteDepartmentPermanent(dept)" title="Permanently delete department">
+                          Delete
                         </button>
                       </div>
                     </td>
@@ -2045,6 +2138,11 @@ onMounted(async () => {
 
                     <td class="text-right">
                       <div class="action-buttons-cell">
+                        <!-- Edit Course Modal -->
+                        <button class="btn btn-outline-primary btn-xs" @click="startEditCourse(c)" title="Edit course name, code, teacher, and department">
+                          Edit
+                        </button>
+
                         <!-- View Enrolled Students Modal -->
                         <button class="btn btn-primary btn-xs" @click="openCourseRosterModal(c)" title="View enrolled students list">
                           View Roster
@@ -2520,13 +2618,9 @@ onMounted(async () => {
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- ============================================================= -->
-        <!-- TAB 3: INVITATIONS REGISTRY (PENDING, USED, EXPIRED)          -->
-        <!-- ============================================================= -->
-        <div v-if="activeSection === 'invitations'" class="tab-pane">
-          <div class="glass-card table-control-card">
+          <!-- Invitations Registry Controls -->
+          <div class="glass-card table-control-card mt-4">
             <div class="search-input-box">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="11" cy="11" r="8"/>
@@ -2927,6 +3021,27 @@ onMounted(async () => {
 
               <!-- Tab: Teachers -->
               <div v-else-if="deptModalTab === 'teachers'">
+                <!-- Assign Educator to Department Control -->
+                <div class="glass-card p-3 mb-3" style="display: flex; gap: 0.75rem; align-items: center; justify-content: space-between;">
+                  <div style="flex: 1; display: flex; gap: 0.5rem; align-items: center;">
+                    <label class="text-xs text-dim" style="white-space: nowrap;">Assign Faculty:</label>
+                    <select v-model="deptAssignTeacherId" class="select-control input-sm" style="flex: 1;">
+                      <option value="">Select educator to assign to this department...</option>
+                      <option v-for="t in teachersList" :key="t.user_id" :value="String(t.user_id)">
+                        {{ t.name }} ({{ t.email }})
+                      </option>
+                    </select>
+                  </div>
+                  <button
+                    class="btn btn-primary btn-xs"
+                    @click="handleAssignTeacherToDeptInModal"
+                    :disabled="!deptAssignTeacherId || isAssigningDeptTeacher"
+                  >
+                    <span v-if="isAssigningDeptTeacher">Assigning...</span>
+                    <span v-else>+ Assign to Department</span>
+                  </button>
+                </div>
+
                 <div v-if="!selectedDeptMembers?.teachers || selectedDeptMembers.teachers.length === 0" class="empty-table-state">
                   <p>No faculty educators assigned to this department yet.</p>
                 </div>
@@ -2965,9 +3080,14 @@ onMounted(async () => {
                           <span v-else class="text-dim text-xs">No specific courses assigned</span>
                         </td>
                         <td class="text-right">
-                          <button class="btn btn-secondary btn-xs" @click="closeDeptMembersModal(); activeSection = 'teachers'; activeTab = 'TEACHERS'; teacherSearch = t.email;">
-                            View Details
-                          </button>
+                          <div class="action-buttons-cell" style="justify-content: flex-end;">
+                            <button class="btn btn-secondary btn-xs" @click="closeDeptMembersModal(); activeSection = 'teachers'; activeTab = 'TEACHERS'; teacherSearch = t.email;">
+                              View Details
+                            </button>
+                            <button class="btn btn-outline-danger btn-xs" @click="handleRemoveTeacherFromDeptInModal(t)" title="Remove from department">
+                              Remove
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     </tbody>
@@ -3132,12 +3252,53 @@ onMounted(async () => {
                 <span>Loading enrolled student roster...</span>
               </div>
 
-              <div v-else-if="!selectedCourseRoster?.students || selectedCourseRoster.students.length === 0" class="empty-table-state">
-                <p>No students enrolled in this course yet.</p>
-                <p class="text-xs text-dim">Students are enrolled when they join via course code, are bulk loaded, or take an assessment in this course.</p>
+              <!-- Quick Enroll Student Bar -->
+              <div v-else class="glass-card p-3 mb-3">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span class="text-sm font-semibold">Enrolled Students ({{ selectedCourseRoster?.students?.length || 0 }})</span>
+                  <button class="btn btn-primary btn-xs" @click="showEnrollStudentForm = !showEnrollStudentForm">
+                    {{ showEnrollStudentForm ? 'Close Form' : '+ Enroll Student' }}
+                  </button>
+                </div>
+
+                <form v-if="showEnrollStudentForm" @submit.prevent="handleEnrollStudentInModal" class="mt-3 pt-3 border-t">
+                  <div class="form-grid">
+                    <div class="field-item flex-2">
+                      <label class="field-label">Student Email *</label>
+                      <input
+                        type="email"
+                        v-model="enrollStudentForm.email"
+                        placeholder="student@university.edu"
+                        class="input-control input-sm"
+                        required
+                      />
+                    </div>
+                    <div class="field-item flex-2">
+                      <label class="field-label">Student Name</label>
+                      <input
+                        type="text"
+                        v-model="enrollStudentForm.name"
+                        placeholder="e.g. John Doe"
+                        class="input-control input-sm"
+                      />
+                    </div>
+                  </div>
+                  <div class="form-action-row mt-2">
+                    <button type="submit" class="btn btn-primary btn-xs" :disabled="isEnrollingStudent || !enrollStudentForm.email">
+                      <span v-if="isEnrollingStudent">Enrolling...</span>
+                      <span v-else>Confirm &amp; Enroll</span>
+                    </button>
+                    <button type="button" class="btn btn-secondary btn-xs" @click="showEnrollStudentForm = false">Cancel</button>
+                  </div>
+                </form>
               </div>
 
-              <div v-else class="table-responsive">
+              <div v-if="!isLoadingCourseRoster && (!selectedCourseRoster?.students || selectedCourseRoster.students.length === 0)" class="empty-table-state">
+                <p>No students enrolled in this course yet.</p>
+                <p class="text-xs text-dim">Use the "+ Enroll Student" button above to add students to this roster.</p>
+              </div>
+
+              <div v-else-if="!isLoadingCourseRoster" class="table-responsive">
                 <table class="data-table">
                   <thead>
                     <tr>
@@ -3146,6 +3307,7 @@ onMounted(async () => {
                       <th>Roll Number</th>
                       <th>Account Status</th>
                       <th>Enrolled On</th>
+                      <th class="text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3173,6 +3335,17 @@ onMounted(async () => {
                       <td class="cell-date">
                         {{ formatDate(student.created_at) }}
                       </td>
+                      <td class="text-right">
+                        <button
+                          class="btn btn-outline-danger btn-xs"
+                          @click="handleUnenrollStudentInModal(student)"
+                          :disabled="isUnenrollingStudentId === student.student_id"
+                          title="Unenroll student from this course"
+                        >
+                          <span v-if="isUnenrollingStudentId === student.student_id">Removing...</span>
+                          <span v-else>Unenroll</span>
+                        </button>
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -3188,6 +3361,69 @@ onMounted(async () => {
               </button>
               <button class="btn btn-secondary" @click="closeCourseRosterModal">Close</button>
             </div>
+          </div>
+        </div>
+
+        <!-- ============================================================= -->
+        <!-- MODAL: EDIT COURSE                                            -->
+        <!-- ============================================================= -->
+        <div v-if="showEditCourseModal" class="modal-overlay" @click.self="cancelEditCourse">
+          <div class="modal-card">
+            <div class="modal-header">
+              <div class="modal-title-wrap">
+                <h3 class="modal-title">Edit Course Details</h3>
+                <p class="modal-subtitle">Update course name, code, department, teacher allocation, or status.</p>
+              </div>
+              <button class="modal-close-btn" @click="cancelEditCourse">&times;</button>
+            </div>
+            <form @submit.prevent="handleUpdateCourse" class="modal-body">
+              <div class="form-grid">
+                <div class="field-item flex-2">
+                  <label class="field-label">Course Name *</label>
+                  <input type="text" v-model="editCourseForm.courseName" class="input-control" required />
+                </div>
+                <div class="field-item flex-1">
+                  <label class="field-label">Course Code</label>
+                  <input type="text" v-model="editCourseForm.courseCode" class="input-control uppercase" />
+                </div>
+              </div>
+              <div class="form-grid mt-3">
+                <div class="field-item flex-1">
+                  <label class="field-label">Department *</label>
+                  <select v-model="editCourseForm.departmentId" class="select-control" required>
+                    <option value="" disabled>Select Department...</option>
+                    <option v-for="d in departmentsList" :key="d.department_id" :value="String(d.department_id)">
+                      {{ d.name }} ({{ d.code }})
+                    </option>
+                  </select>
+                </div>
+                <div class="field-item flex-1">
+                  <label class="field-label">Assigned Teacher</label>
+                  <select v-model="editCourseForm.teacherId" class="select-control">
+                    <option value="">Leave unassigned</option>
+                    <option v-for="t in teachersList" :key="t.user_id" :value="String(t.user_id)">
+                      {{ t.name }} ({{ t.email }})
+                    </option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-grid mt-3">
+                <div class="field-item flex-1">
+                  <label class="field-label">Course Status</label>
+                  <select v-model="editCourseForm.status" class="select-control">
+                    <option value="active">Active</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </div>
+              </div>
+              <div class="modal-footer mt-4">
+                <button type="submit" class="btn btn-primary" :disabled="isUpdatingCourse">
+                  <span v-if="isUpdatingCourse">Saving...</span>
+                  <span v-else>Save Changes</span>
+                </button>
+                <button type="button" class="btn btn-secondary" @click="cancelEditCourse">Cancel</button>
+              </div>
+            </form>
           </div>
         </div>
       </section>

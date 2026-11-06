@@ -1767,6 +1767,13 @@ onMounted(async () => {
 
         <!-- TEACHER nav -->
         <template v-if="auth.isTeacher.value">
+          <button :class="['sidebar-nav-item', activeSection === 'dashboard' && 'active']" @click="activeSection = 'dashboard'">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
+              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+              <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+            </svg>
+            <span v-if="!sidebarCollapsed">Overview</span>
+          </button>
           <button :class="['sidebar-nav-item', activeSection === 'courses' && 'active']" @click="activeSection = 'courses'">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
               <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
@@ -1969,6 +1976,54 @@ onMounted(async () => {
       <!-- VIEW 2: TEACHER DASHBOARD                     -->
       <!-- ============================================== -->
       <section v-if="auth.isTeacher.value" class="role-view">
+
+        <!-- ============================================== -->
+        <!-- OVERVIEW TAB                                   -->
+        <!-- ============================================== -->
+        <div v-if="activeSection === 'dashboard'" class="tab-content-panel mt-3">
+          <!-- Banner Card -->
+          <div class="glass-card banner-card">
+            <div class="badge badge-info">
+              <span class="badge-dot"></span> {{ auth.user.value?.universityName || 'Academic Faculty' }}
+            </div>
+            <h2 class="banner-title">Welcome, {{ auth.user.value?.name }}</h2>
+            <p class="banner-text">
+              Manage your courses, assessments, review student submissions, and monitor AI generation health.
+            </p>
+          </div>
+
+          <!-- Metric Stat Cards -->
+          <div class="grid-cards mt-3">
+            <div class="glass-card stat-card" @click="activeSection = 'courses'">
+              <div class="stat-number text-blue">{{ educatorDashboardStats.coursesCount }}</div>
+              <div class="stat-label">My Courses</div>
+              <p class="stat-hint">Assigned &amp; created curriculum classes</p>
+            </div>
+
+            <div class="glass-card stat-card" @click="activeSection = 'assessments'">
+              <div class="stat-number text-amber">{{ educatorDashboardStats.draftsCount + educatorDashboardStats.publishedCount }}</div>
+              <div class="stat-label">Assessments</div>
+              <p class="stat-hint">{{ educatorDashboardStats.publishedCount }} published &bull; {{ educatorDashboardStats.draftsCount }} drafts</p>
+            </div>
+
+            <div class="glass-card stat-card" @click="activeSection = 'reviews'">
+              <div class="stat-number" :class="{ 'text-danger': educatorDashboardStats.flaggedCount > 0 }">
+                {{ educatorDashboardStats.waitingReviewCount }}
+              </div>
+              <div class="stat-label">Waiting for Review</div>
+              <p class="stat-hint">
+                <span v-if="educatorDashboardStats.flaggedCount > 0" class="text-danger font-bold">⚠️ {{ educatorDashboardStats.flaggedCount }} flagged</span>
+                <span v-else>0 flagged</span>
+              </p>
+            </div>
+
+            <div class="glass-card stat-card" @click="activeSection = 'exports'">
+              <div class="stat-number text-primary">{{ educatorDashboardStats.exportsCount }}</div>
+              <div class="stat-label">Exports &amp; AI</div>
+              <p class="stat-hint">{{ educatorDashboardStats.exportsCount }} export packages</p>
+            </div>
+          </div>
+        </div>
 
         <!-- ============================================== -->
         <!-- SECTION 1: MY COURSES & DEDICATED COURSE PAGE (HUB)-->

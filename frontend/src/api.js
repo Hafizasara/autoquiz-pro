@@ -184,6 +184,65 @@ export const dismissAiFailure = async (token, failureId) => {
   });
 };
 
+// Course Hub & Roster Management API
+export const fetchCourseHub = async (token, courseId) => {
+  return await request(`/teacher/courses/${courseId}/hub`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const enrollSingleStudent = async (token, courseId, studentData) => {
+  return await request(`/teacher/courses/${courseId}/students`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(studentData)
+  });
+};
+
+export const enrollBulkStudents = async (token, courseId, studentsArray) => {
+  return await request(`/teacher/courses/${courseId}/students/bulk`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ students: studentsArray })
+  });
+};
+
+export const updateCourseStudent = async (token, courseId, studentId, studentData) => {
+  return await request(`/teacher/courses/${courseId}/students/${studentId}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(studentData)
+  });
+};
+
+export const checkStudentAttempts = async (token, courseId, studentId) => {
+  return await request(`/teacher/courses/${courseId}/students/${studentId}/attempts-check`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const unenrollCourseStudent = async (token, courseId, studentId, resolution = 'archive') => {
+  return await request(`/teacher/courses/${courseId}/students/${studentId}?resolution=${resolution}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const addCourseMaterial = async (token, courseId, materialData) => {
+  return await request(`/teacher/courses/${courseId}/materials`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(materialData)
+  });
+};
+
+export const deleteCourseMaterial = async (token, courseId, materialId) => {
+  return await request(`/teacher/courses/${courseId}/materials/${materialId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ADMIN API - Complete Admin Portal Functions
 // ═══════════════════════════════════════════════════════════════════════════════

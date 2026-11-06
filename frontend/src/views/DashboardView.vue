@@ -13,6 +13,14 @@ import {
   createQuizExport,
   retryAiFailure,
   dismissAiFailure,
+  fetchCourseHub,
+  enrollSingleStudent,
+  enrollBulkStudents,
+  updateCourseStudent,
+  checkStudentAttempts,
+  unenrollCourseStudent,
+  addCourseMaterial,
+  deleteCourseMaterial,
   fetchAdminTeachers,
   updateTeacherStatus,
   updateTeacherApproval,
@@ -91,6 +99,55 @@ const selectedInspectQuiz = ref(null);
 const retryingFailureId = ref(null);
 const isPublishingDraftId = ref(null);
 const teacherToast = ref('');
+
+// --- Teacher Course Search & Course Page Hub State ---
+const courseSearchQuery = ref('');
+const selectedCourseHub = ref(null);
+const courseHubTab = ref('students'); // 'students' | 'materials' | 'assessments' | 'results'
+const isLoadingCourseHub = ref(false);
+const courseHubData = ref({
+  course: null,
+  students: [],
+  materials: [],
+  assessments: [],
+  results: [],
+  analytics: {},
+  approvedDomains: []
+});
+const studentRosterSearch = ref('');
+
+// Single Student Add Modal
+const showSingleStudentModal = ref(false);
+const singleStudentForm = ref({ name: '', rollNumber: '', email: '' });
+const isEnrollingSingle = ref(false);
+
+// Bulk Students Add Modal
+const showBulkStudentModal = ref(false);
+const bulkEnrollMode = ref('paste'); // 'paste' | 'csv'
+const bulkPasteText = ref('');
+const bulkParsedRows = ref([]);
+const bulkDuplicatesCount = ref(0);
+const bulkInvalidCount = ref(0);
+const bulkNonInstitutionalCount = ref(0);
+const isEnrollingBulk = ref(false);
+
+// Edit Student Modal
+const showEditStudentModal = ref(false);
+const editStudentForm = ref({ student_id: null, name: '', rollNumber: '', email: '' });
+const isUpdatingStudent = ref(false);
+
+// Remove Student Decision Workflow
+const showRemoveDecisionModal = ref(false);
+const studentToRemove = ref(null);
+const studentAttemptsCheck = ref({ hasAttempts: false, attemptCount: 0 });
+const isCheckingAttempts = ref(false);
+const isRemovingStudent = ref(false);
+const removalResolutionChoice = ref('archive'); // 'archive' | 'block' | 'purge'
+
+// Course Material Add Modal
+const showAddMaterialModal = ref(false);
+const materialForm = ref({ title: '', fileName: '', sourceType: 'PDF' });
+const isAddingMaterial = ref(false);
 
 // Admin Messages & Notifications
 const adminErrorMessage = ref('');
@@ -1324,6 +1381,301 @@ const openInspectQuizModal = (quiz) => {
   showInspectQuizModal.value = true;
 };
 
+// ==============================================================================
+// TEACHER COURSE HUB & ROSTER MANAGEMENT METHODS
+// ==============================================================================
+
+const filteredTeacherCourses = computed(() => {
+  if (!courseSearchQuery.value.trim()) return teacherCourses.value;
+  const q = courseSearchQuery.value.toLowerCase().trim();
+  return teacherCourses.value.filter(c => {
+    return (c.course_name && c.course_name.toLowerCase().includes(q)) ||
+           (c.course_code && c.course_code.toLowerCase().includes(q)) ||
+           (c.department_name && c.department_name.toLowerCase().includes(q));
+  });
+});
+
+const openCourseHub = async (course) => {
+  selectedCourseHub.value = course;
+  courseHubTab.value = 'students';
+  await loadCourseHubData(course.course_id);
+};
+
+const closeCourseHub = () => {
+  selectedCourseHub.value = null;
+  studentRosterSearch.value = '';
+};
+
+const loadCourseHubData = async (courseId) => {
+  isLoadingCourseHub.value = true;
+  try {
+    const res = await fetchCourseHub(auth.token.value, courseId);
+    courseHubData.value = res.data || {
+      course: null,
+      students: [],
+      materials: [],
+      assessments: [],
+      results: [],
+      analytics: {},
+      approvedDomains: []
+    };
+  } catch (err) {
+    triggerCopyToast(err.message || 'Failed to load course details.');
+  } finally {
+    isLoadingCourseHub.value = false;
+  }
+};
+
+const filteredCourseStudents = computed(() => {
+  const list = courseHubData.value?.students || [];
+  if (!studentRosterSearch.value.trim()) return list;
+  const q = studentRosterSearch.value.toLowerCase().trim();
+  return list.filter(s => {
+    return (s.name && s.name.toLowerCase().includes(q)) ||
+           (s.roll_number && s.roll_number.toLowerCase().includes(q)) ||
+           (s.email && s.email.toLowerCase().includes(q));
+  });
+});
+
+const singleDomainWarning = computed(() => {
+  const em = (singleStudentForm.value.email || '').trim().toLowerCase();
+  if (!em || !em.includes('@')) return null;
+  const domain = em.split('@')[1];
+  const consumerDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com', 'mail.com', 'live.com', 'aol.com'];
+  if (consumerDomains.includes(domain)) {
+    return `Non-institutional consumer domain detected (@${domain}). Official university student email (e.g. @students.ptut.edu.pk) recommended.`;
+  }
+  return null;
+});
+
+const handleEnrollSingleStudent = async () => {
+  if (!selectedCourseHub.value) return;
+  isEnrollingSingle.value = true;
+  try {
+    const res = await enrollSingleStudent(auth.token.value, selectedCourseHub.value.course_id, singleStudentForm.value);
+    triggerCopyToast(res.message || 'Student enrolled successfully!');
+    singleStudentForm.value = { name: '', rollNumber: '', email: '' };
+    showSingleStudentModal.value = false;
+    await loadCourseHubData(selectedCourseHub.value.course_id);
+    await loadTeacherData();
+  } catch (err) {
+    triggerCopyToast(err.message || 'Failed to enroll student.');
+  } finally {
+    isEnrollingSingle.value = false;
+  }
+};
+
+const parseBulkInput = () => {
+  const text = bulkPasteText.value.trim();
+  if (!text) {
+    bulkParsedRows.value = [];
+    bulkDuplicatesCount.value = 0;
+    bulkInvalidCount.value = 0;
+    bulkNonInstitutionalCount.value = 0;
+    return;
+  }
+
+  const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+  const rows = [];
+  const seenEmails = new Set();
+  const consumerDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com', 'mail.com', 'live.com', 'aol.com'];
+  
+  let dups = 0;
+  let invalids = 0;
+  let nonInst = 0;
+
+  for (const line of lines) {
+    // Skip header line if detected
+    if (/name.*roll.*email/i.test(line) || /student.*roll/i.test(line)) continue;
+
+    const parts = line.includes('\t') ? line.split('\t') : line.split(',');
+    if (parts.length < 3) {
+      invalids++;
+      continue;
+    }
+
+    const name = parts[0].trim();
+    const rollNumber = parts[1].trim().toUpperCase();
+    const email = parts[2].trim().toLowerCase();
+
+    const isValidEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email);
+    if (!name || !rollNumber || !isValidEmail) {
+      invalids++;
+      continue;
+    }
+
+    if (seenEmails.has(email)) {
+      dups++;
+      continue;
+    }
+    seenEmails.add(email);
+
+    const domain = email.split('@')[1];
+    const isNonInst = consumerDomains.includes(domain);
+    if (isNonInst) nonInst++;
+
+    rows.push({
+      name,
+      rollNumber,
+      email,
+      isNonInstitutional: isNonInst
+    });
+  }
+
+  bulkParsedRows.value = rows;
+  bulkDuplicatesCount.value = dups;
+  bulkInvalidCount.value = invalids;
+  bulkNonInstitutionalCount.value = nonInst;
+};
+
+const handleCSVFileUpload = (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    bulkPasteText.value = e.target.result;
+    parseBulkInput();
+  };
+  reader.readAsText(file);
+};
+
+const handleEnrollBulkStudents = async () => {
+  if (!selectedCourseHub.value || bulkParsedRows.value.length === 0) return;
+  isEnrollingBulk.value = true;
+  try {
+    const res = await enrollBulkStudents(
+      auth.token.value,
+      selectedCourseHub.value.course_id,
+      bulkParsedRows.value
+    );
+    triggerCopyToast(res.message || 'Bulk student enrollment complete!');
+    bulkPasteText.value = '';
+    bulkParsedRows.value = [];
+    showBulkStudentModal.value = false;
+    await loadCourseHubData(selectedCourseHub.value.course_id);
+    await loadTeacherData();
+  } catch (err) {
+    triggerCopyToast(err.message || 'Bulk enrollment failed.');
+  } finally {
+    isEnrollingBulk.value = false;
+  }
+};
+
+const openEditStudentModal = (student) => {
+  editStudentForm.value = {
+    student_id: student.student_id,
+    name: student.name,
+    rollNumber: student.roll_number,
+    email: student.email
+  };
+  showEditStudentModal.value = true;
+};
+
+const handleUpdateStudent = async () => {
+  if (!selectedCourseHub.value || !editStudentForm.value.student_id) return;
+  isUpdatingStudent.value = true;
+  try {
+    const res = await updateCourseStudent(
+      auth.token.value,
+      selectedCourseHub.value.course_id,
+      editStudentForm.value.student_id,
+      editStudentForm.value
+    );
+    triggerCopyToast(res.message || 'Student updated successfully.');
+    showEditStudentModal.value = false;
+    await loadCourseHubData(selectedCourseHub.value.course_id);
+  } catch (err) {
+    triggerCopyToast(err.message || 'Failed to update student.');
+  } finally {
+    isUpdatingStudent.value = false;
+  }
+};
+
+const handleInitiateRemoveStudent = async (student) => {
+  if (!selectedCourseHub.value) return;
+  isCheckingAttempts.value = true;
+  studentToRemove.value = student;
+  try {
+    const res = await checkStudentAttempts(
+      auth.token.value,
+      selectedCourseHub.value.course_id,
+      student.student_id
+    );
+    studentAttemptsCheck.value = res.data || { hasAttempts: false, attemptCount: 0 };
+    
+    if (res.data?.hasAttempts && res.data?.attemptCount > 0) {
+      // Student has attempts: show Decision Modal
+      removalResolutionChoice.value = 'archive';
+      showRemoveDecisionModal.value = true;
+    } else {
+      // Student has no attempts: direct confirmation
+      if (confirm(`Unenroll student "${student.name}" (${student.roll_number}) from this course?`)) {
+        await unenrollCourseStudent(auth.token.value, selectedCourseHub.value.course_id, student.student_id, 'archive');
+        triggerCopyToast(`Removed "${student.name}" from course roster.`);
+        await loadCourseHubData(selectedCourseHub.value.course_id);
+        await loadTeacherData();
+      }
+    }
+  } catch (err) {
+    triggerCopyToast(err.message || 'Error checking student attempts.');
+  } finally {
+    isCheckingAttempts.value = false;
+  }
+};
+
+const handleConfirmStudentRemoval = async () => {
+  if (!selectedCourseHub.value || !studentToRemove.value) return;
+  isRemovingStudent.value = true;
+  try {
+    const res = await unenrollCourseStudent(
+      auth.token.value,
+      selectedCourseHub.value.course_id,
+      studentToRemove.value.student_id,
+      removalResolutionChoice.value
+    );
+    triggerCopyToast(res.message || 'Student unenrollment processed.');
+    showRemoveDecisionModal.value = false;
+    studentToRemove.value = null;
+    await loadCourseHubData(selectedCourseHub.value.course_id);
+    await loadTeacherData();
+  } catch (err) {
+    triggerCopyToast(err.message || 'Failed to process student removal.');
+  } finally {
+    isRemovingStudent.value = false;
+  }
+};
+
+const handleAddCourseMaterial = async () => {
+  if (!selectedCourseHub.value || !materialForm.value.title) return;
+  isAddingMaterial.value = true;
+  try {
+    const res = await addCourseMaterial(
+      auth.token.value,
+      selectedCourseHub.value.course_id,
+      materialForm.value
+    );
+    triggerCopyToast(res.message || 'Material added successfully.');
+    materialForm.value = { title: '', fileName: '', sourceType: 'PDF' };
+    showAddMaterialModal.value = false;
+    await loadCourseHubData(selectedCourseHub.value.course_id);
+  } catch (err) {
+    triggerCopyToast(err.message || 'Failed to add material.');
+  } finally {
+    isAddingMaterial.value = false;
+  }
+};
+
+const handleDeleteCourseMaterial = async (materialId) => {
+  if (!confirm('Delete this course material?')) return;
+  try {
+    await deleteCourseMaterial(auth.token.value, selectedCourseHub.value.course_id, materialId);
+    triggerCopyToast('Course material deleted.');
+    await loadCourseHubData(selectedCourseHub.value.course_id);
+  } catch (err) {
+    triggerCopyToast(err.message || 'Failed to delete material.');
+  }
+};
+
 onMounted(async () => {
   if (auth.isTeacher.value) {
     await loadTeacherData();
@@ -1765,61 +2117,532 @@ onMounted(async () => {
         </div>
 
         <!-- ============================================== -->
-        <!-- TAB 1: MY COURSES                              -->
+        <!-- TAB 1: MY COURSES & DEDICATED COURSE PAGE (HUB)-->
         <!-- ============================================== -->
         <div v-if="teacherActiveTab === 'COURSES'" class="tab-content-panel mt-3">
-          <div class="section-top-row">
-            <div>
-              <h3 class="section-title">My Courses ({{ teacherCourses.length }})</h3>
-              <p class="section-desc">Curriculum modules assigned to you or created under your educator profile.</p>
-            </div>
-            <div class="action-btn-group">
-              <button class="btn btn-primary btn-sm" @click="showTeacherNewCourseModal = true">
-                + New Course
-              </button>
-              <button class="btn btn-secondary btn-sm" @click="loadTeacherData">
-                Refresh
-              </button>
-            </div>
-          </div>
-
-          <!-- Empty Courses State -->
-          <div v-if="!teacherLoading && teacherCourses.length === 0" class="glass-card empty-dashboard-card">
-            <div class="empty-icon-circle">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
-                <path d="M6 6h10M6 10h10"/>
-              </svg>
-            </div>
-            <h3 class="empty-title">No Courses Assigned Yet</h3>
-            <p class="empty-desc">
-              You haven't been assigned any courses yet. Use the <strong>+ New Course</strong> shortcut above to register a course.
-            </p>
-            <button class="btn btn-primary" @click="showTeacherNewCourseModal = true">+ Create New Course</button>
-          </div>
-
-          <!-- Active Courses Grid -->
-          <div v-else-if="teacherCourses.length > 0" class="grid-cards">
-            <div v-for="c in teacherCourses" :key="c.course_id" class="glass-card course-card">
-              <div class="course-header">
-                <span class="course-badge">{{ c.course_code || 'CRS' }}</span>
-                <span class="student-count">{{ c.student_count || 0 }} Students</span>
+          <!-- SUB-VIEW A: ALL COURSES DIRECTORY (when no course selected) -->
+          <div v-if="!selectedCourseHub">
+            <div class="section-top-row">
+              <div>
+                <h3 class="section-title">My Courses ({{ teacherCourses.length }})</h3>
+                <p class="section-desc">Curriculum modules assigned to you or created under your educator profile. Click any course to open its full Course Page.</p>
               </div>
-              <h4 class="course-name">{{ c.course_name }}</h4>
-              <p class="course-meta">{{ c.department_name || 'Academic Department' }}</p>
-              <div class="course-actions">
+              <div class="action-btn-group">
+                <button class="btn btn-primary btn-sm" @click="showTeacherNewCourseModal = true">
+                  + New Course
+                </button>
+                <button class="btn btn-secondary btn-sm" @click="loadTeacherData">
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            <!-- Course Search Filter Input -->
+            <div class="search-filter-row mb-4">
+              <div class="search-input-wrap flex-1">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="search-icon">
+                  <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input
+                  type="text"
+                  v-model="courseSearchQuery"
+                  class="search-input"
+                  placeholder="Search courses by name (e.g. Information Security), code (e.g. ST-101), or department..."
+                />
+                <button v-if="courseSearchQuery" class="clear-search-btn" @click="courseSearchQuery = ''">&times;</button>
+              </div>
+              <span v-if="courseSearchQuery" class="badge-mini-count">
+                {{ filteredTeacherCourses.length }} of {{ teacherCourses.length }} courses
+              </span>
+            </div>
+
+            <!-- Empty Courses State -->
+            <div v-if="!teacherLoading && teacherCourses.length === 0" class="glass-card empty-dashboard-card">
+              <div class="empty-icon-circle">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+                  <path d="M6 6h10M6 10h10"/>
+                </svg>
+              </div>
+              <h3 class="empty-title">No Courses Assigned Yet</h3>
+              <p class="empty-desc">
+                You haven't been assigned any courses yet. Use the <strong>+ New Course</strong> shortcut to register a course.
+              </p>
+              <button class="btn btn-primary" @click="showTeacherNewCourseModal = true">+ Create New Course</button>
+            </div>
+
+            <!-- Search No Results State -->
+            <div v-else-if="filteredTeacherCourses.length === 0" class="glass-card empty-dashboard-card">
+              <h3 class="empty-title">No Courses Match "{{ courseSearchQuery }}"</h3>
+              <p class="empty-desc">Try searching for a different course name or course code.</p>
+              <button class="btn btn-secondary" @click="courseSearchQuery = ''">Clear Search Filter</button>
+            </div>
+
+            <!-- Active Courses Grid -->
+            <div v-else class="grid-cards">
+              <div v-for="c in filteredTeacherCourses" :key="c.course_id" class="glass-card course-card">
+                <div class="course-header">
+                  <span class="course-badge font-bold">{{ c.course_code || 'CRS' }}</span>
+                  <span class="student-count">{{ c.student_count || 0 }} Students</span>
+                </div>
+                <h4 class="course-name">{{ c.course_name }}</h4>
+                <p class="course-meta">{{ c.department_name || 'Academic Department' }}</p>
+                <div class="course-actions">
+                  <button
+                    class="btn btn-primary btn-block btn-sm"
+                    @click="openCourseHub(c)"
+                  >
+                    🚀 Open Course Page (Hub)
+                  </button>
+                  <router-link
+                    :to="`/assessments/create?courseId=${c.course_id}`"
+                    class="btn btn-secondary btn-block btn-sm"
+                  >
+                    + Create Assessment for Course
+                  </router-link>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SUB-VIEW B: DEDICATED COURSE PAGE (HUB) WITH 4 TABS -->
+          <div v-else class="course-hub-page">
+            <!-- Breadcrumbs / Back Bar -->
+            <div class="course-hub-nav-bar mb-3">
+              <button class="btn btn-secondary btn-sm" @click="closeCourseHub">
+                &larr; Back to All Courses
+              </button>
+              <div class="course-hub-breadcrumb text-sm text-muted">
+                Educator Studio &bull; <strong>{{ selectedCourseHub.course_name }}</strong> ({{ selectedCourseHub.course_code || 'CRS' }})
+              </div>
+            </div>
+
+            <!-- Course Header Summary Card -->
+            <div class="glass-card course-hub-header-card mb-4">
+              <div class="course-hub-header-left">
+                <div class="badge badge-info mb-2">
+                  <span class="badge-dot"></span> {{ courseHubData.course?.department_name || selectedCourseHub.department_name || 'Academic Department' }}
+                </div>
+                <h2 class="course-hub-title">
+                  {{ selectedCourseHub.course_name }}
+                  <span class="code-mono course-code-badge ml-2">{{ selectedCourseHub.course_code }}</span>
+                </h2>
+                <p class="course-hub-desc text-muted">
+                  Curriculum Module &bull; {{ courseHubData.students?.length || 0 }} Enrolled Students &bull; {{ courseHubData.assessments?.length || 0 }} Course Assessments
+                </p>
+              </div>
+              <div class="course-hub-header-stats">
+                <div class="hub-stat-item">
+                  <span class="hub-stat-val text-blue">{{ courseHubData.students?.length || 0 }}</span>
+                  <span class="hub-stat-lbl">Enrolled Students</span>
+                </div>
+                <div class="hub-stat-item">
+                  <span class="hub-stat-val text-amber">{{ courseHubData.assessments?.length || 0 }}</span>
+                  <span class="hub-stat-lbl">Assessments</span>
+                </div>
+                <div class="hub-stat-item">
+                  <span class="hub-stat-val text-success">{{ courseHubData.analytics?.passRate || 0 }}%</span>
+                  <span class="hub-stat-lbl">Class Pass Rate</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Course Page 4 Tabs Navigation -->
+            <div class="admin-tabs mb-4">
+              <button
+                :class="['admin-tab-btn', courseHubTab === 'students' && 'active']"
+                @click="courseHubTab = 'students'"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
+                1. Students &amp; Roster ({{ courseHubData.students?.length || 0 }})
+              </button>
+
+              <button
+                :class="['admin-tab-btn', courseHubTab === 'materials' && 'active']"
+                @click="courseHubTab = 'materials'"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
+                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+                </svg>
+                2. Materials ({{ courseHubData.materials?.length || 0 }})
+              </button>
+
+              <button
+                :class="['admin-tab-btn', courseHubTab === 'assessments' && 'active']"
+                @click="courseHubTab = 'assessments'"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                </svg>
+                3. Assessments ({{ courseHubData.assessments?.length || 0 }})
+              </button>
+
+              <button
+                :class="['admin-tab-btn', courseHubTab === 'results' && 'active']"
+                @click="courseHubTab = 'results'"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
+                  <line x1="18" y1="20" x2="18" y2="10"/>
+                  <line x1="12" y1="20" x2="12" y2="4"/>
+                  <line x1="6" y1="20" x2="6" y2="14"/>
+                </svg>
+                4. Results &amp; Analytics ({{ courseHubData.results?.length || 0 }})
+              </button>
+            </div>
+
+            <!-- ============================================== -->
+            <!-- COURSE HUB TAB 1: STUDENTS & ROSTER            -->
+            <!-- ============================================== -->
+            <div v-if="courseHubTab === 'students'" class="course-hub-tab-panel">
+              <div class="section-top-row">
+                <div>
+                  <h4 class="section-title">Enrolled Student Roster ({{ courseHubData.students?.length || 0 }})</h4>
+                  <p class="section-desc">Manage enrolled student university emails, track sign-in status, and maintain student records.</p>
+                </div>
+                <div class="action-btn-group">
+                  <button class="btn btn-primary btn-sm" @click="showSingleStudentModal = true">
+                    + Add Student
+                  </button>
+                  <button class="btn btn-secondary btn-sm" @click="showBulkStudentModal = true">
+                    📥 Bulk Enroll (Paste / CSV)
+                  </button>
+                </div>
+              </div>
+
+              <!-- Roster Status Summary Bar -->
+              <div class="roster-status-strip mb-3 p-3 bg-white rounded border flex items-center justify-between flex-wrap gap-2">
+                <div class="flex items-center gap-3 text-xs">
+                  <span class="font-bold text-gray-700">Roster Status:</span>
+                  <span class="badge badge-success">
+                    <span class="badge-dot"></span> {{ courseHubData.analytics?.signedInCount || 0 }} Signed In
+                  </span>
+                  <span class="badge badge-warning">
+                    <span class="badge-dot"></span> {{ courseHubData.analytics?.neverSignedInCount || 0 }} Never Signed In
+                  </span>
+                  <span v-if="courseHubData.analytics?.nonInstitutionalCount > 0" class="badge-mini-danger font-bold">
+                    ⚠️ {{ courseHubData.analytics?.nonInstitutionalCount }} Non-Institutional Domain Warning
+                  </span>
+                </div>
+                <div class="search-input-wrap text-xs">
+                  <input
+                    type="text"
+                    v-model="studentRosterSearch"
+                    placeholder="Filter roster by name, roll, email..."
+                    class="search-input py-1 text-xs"
+                  />
+                </div>
+              </div>
+
+              <!-- Empty Students State -->
+              <div v-if="!isLoadingCourseHub && courseHubData.students?.length === 0" class="glass-card empty-dashboard-card">
+                <div class="empty-icon-circle">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                  </svg>
+                </div>
+                <h3 class="empty-title">No Students Enrolled in this Course Yet</h3>
+                <p class="empty-desc">Add university student emails individually or in bulk using a pasted list or CSV.</p>
+                <div class="action-btn-group justify-center">
+                  <button class="btn btn-primary" @click="showSingleStudentModal = true">+ Add Student</button>
+                  <button class="btn btn-secondary" @click="showBulkStudentModal = true">📥 Bulk Enroll from List/CSV</button>
+                </div>
+              </div>
+
+              <!-- Students Table -->
+              <div v-else class="table-responsive glass-card p-0">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Student Name</th>
+                      <th>Roll Number</th>
+                      <th>University Email</th>
+                      <th>Domain Validation</th>
+                      <th>Account Sign-In Status</th>
+                      <th>Attempts</th>
+                      <th class="text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="s in filteredCourseStudents" :key="s.student_id">
+                      <td>
+                        <div class="student-name font-bold">{{ s.name }}</div>
+                      </td>
+                      <td>
+                        <span class="code-mono font-bold">{{ s.roll_number }}</span>
+                      </td>
+                      <td>
+                        <span class="code-mono text-sm">{{ s.email }}</span>
+                      </td>
+                      <td>
+                        <span v-if="s.is_approved_domain" class="badge badge-success text-xs">
+                          <span class="badge-dot"></span> Institutional Domain
+                        </span>
+                        <span v-else class="badge-mini-danger font-bold text-xs" title="Not on university approved domain">
+                          ⚠️ Non-Institutional (@{{ s.email.split('@')[1] }})
+                        </span>
+                      </td>
+                      <td>
+                        <span v-if="s.has_signed_in" class="badge badge-success text-xs">
+                          <span class="badge-dot"></span> Signed In / Active
+                        </span>
+                        <span v-else class="badge badge-warning text-xs">
+                          <span class="badge-dot"></span> Never Signed In
+                        </span>
+                      </td>
+                      <td>
+                        <span :class="['badge', s.attempt_count > 0 ? 'badge-info' : 'badge-light']">
+                          {{ s.attempt_count }} Attempts
+                        </span>
+                      </td>
+                      <td class="text-right">
+                        <div class="action-btn-group justify-end">
+                          <button
+                            class="btn btn-secondary btn-xs"
+                            @click="openEditStudentModal(s)"
+                            title="Edit student name, roll number, or email"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            class="btn btn-outline-danger btn-xs"
+                            @click="handleInitiateRemoveStudent(s)"
+                            title="Remove student from this course"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- ============================================== -->
+            <!-- COURSE HUB TAB 2: MATERIALS                    -->
+            <!-- ============================================== -->
+            <div v-if="courseHubTab === 'materials'" class="course-hub-tab-panel">
+              <div class="section-top-row">
+                <div>
+                  <h4 class="section-title">Course Learning Materials ({{ courseHubData.materials?.length || 0 }})</h4>
+                  <p class="section-desc">Upload and manage lecture slides, syllabi, reading packs, and reference notes for students.</p>
+                </div>
+                <button class="btn btn-primary btn-sm" @click="showAddMaterialModal = true">
+                  + Add Course Material
+                </button>
+              </div>
+
+              <!-- Empty Materials State -->
+              <div v-if="courseHubData.materials?.length === 0" class="glass-card empty-dashboard-card">
+                <div class="empty-icon-circle">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+                    <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+                  </svg>
+                </div>
+                <h3 class="empty-title">No Course Materials Uploaded Yet</h3>
+                <p class="empty-desc">Share lecture slides, reading materials, and curriculum handouts with enrolled students.</p>
+                <button class="btn btn-primary" @click="showAddMaterialModal = true">+ Upload First Material</button>
+              </div>
+
+              <!-- Materials Table -->
+              <div v-else class="table-responsive glass-card p-0">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Material Title</th>
+                      <th>File Name / Reference</th>
+                      <th>Type</th>
+                      <th>Uploaded Date</th>
+                      <th class="text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="m in courseHubData.materials" :key="m.material_id">
+                      <td>
+                        <div class="font-bold text-sm">{{ m.title }}</div>
+                      </td>
+                      <td>
+                        <span class="code-mono text-xs">{{ m.file_name }}</span>
+                      </td>
+                      <td>
+                        <span class="badge badge-info">{{ m.source_type || 'PDF' }}</span>
+                      </td>
+                      <td class="cell-date">{{ formatDate(m.created_at) }}</td>
+                      <td class="text-right">
+                        <div class="action-btn-group justify-end">
+                          <button class="btn btn-secondary btn-xs" @click="triggerCopyToast(`Opening ${m.file_name}`)">
+                            Download / View
+                          </button>
+                          <button class="btn btn-outline-danger btn-xs" @click="handleDeleteCourseMaterial(m.material_id)">
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- ============================================== -->
+            <!-- COURSE HUB TAB 3: ASSESSMENTS                  -->
+            <!-- ============================================== -->
+            <div v-if="courseHubTab === 'assessments'" class="course-hub-tab-panel">
+              <div class="section-top-row">
+                <div>
+                  <h4 class="section-title">Course Assessments ({{ courseHubData.assessments?.length || 0 }})</h4>
+                  <p class="section-desc">Assessments and quizzes specifically assigned to this curriculum module.</p>
+                </div>
                 <router-link
-                  :to="`/assessments/create?courseId=${c.course_id}`"
-                  class="btn btn-primary btn-block btn-sm"
+                  :to="`/assessments/create?courseId=${selectedCourseHub.course_id}`"
+                  class="btn btn-primary btn-sm"
                 >
                   + Create Assessment for Course
                 </router-link>
-                <button
-                  class="btn btn-secondary btn-block btn-sm"
-                  @click="openCourseRosterModal(c)"
-                >
-                  Inspect Enrolled Roster
+              </div>
+
+              <!-- Empty Assessments -->
+              <div v-if="courseHubData.assessments?.length === 0" class="glass-card empty-dashboard-card">
+                <div class="empty-icon-circle">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+                  </svg>
+                </div>
+                <h3 class="empty-title">No Assessments Created for this Course</h3>
+                <p class="empty-desc">Create your first AI-generated assessment quiz for this curriculum.</p>
+                <router-link :to="`/assessments/create?courseId=${selectedCourseHub.course_id}`" class="btn btn-primary">
+                  + Create Assessment
+                </router-link>
+              </div>
+
+              <!-- Assessments Table -->
+              <div v-else class="table-responsive glass-card p-0">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Assessment Title</th>
+                      <th>Questions</th>
+                      <th>Total Marks</th>
+                      <th>Duration</th>
+                      <th>Status</th>
+                      <th>Created</th>
+                      <th class="text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="a in courseHubData.assessments" :key="a.assessment_id">
+                      <td>
+                        <div class="font-bold text-sm">{{ a.title }}</div>
+                      </td>
+                      <td>
+                        <span class="badge badge-info">{{ a.questions_count || 0 }} Items</span>
+                      </td>
+                      <td>{{ a.total_marks }} pts</td>
+                      <td>{{ a.duration_minutes }} mins</td>
+                      <td>
+                        <span :class="['badge', (a.status || '').toUpperCase() === 'PUBLISHED' ? 'badge-success' : 'badge-warning']">
+                          <span class="badge-dot"></span> {{ a.status }}
+                        </span>
+                      </td>
+                      <td class="cell-date">{{ formatDate(a.created_at) }}</td>
+                      <td class="text-right">
+                        <button class="btn btn-secondary btn-xs" @click="openInspectQuizModal(a)">
+                          Inspect
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- ============================================== -->
+            <!-- COURSE HUB TAB 4: RESULTS & ANALYTICS          -->
+            <!-- ============================================== -->
+            <div v-if="courseHubTab === 'results'" class="course-hub-tab-panel">
+              <div class="section-top-row">
+                <div>
+                  <h4 class="section-title">Course Examination Results &amp; Analytics</h4>
+                  <p class="section-desc">Class performance overview, score distributions, and individual student attempt records.</p>
+                </div>
+                <button class="btn btn-secondary btn-sm" @click="openExportModal({ title: `${selectedCourseHub.course_name} Gradebook` })">
+                  📥 Export Gradebook (CSV)
                 </button>
+              </div>
+
+              <!-- Metrics Strip -->
+              <div class="grid-cards mb-4">
+                <div class="glass-card stat-card">
+                  <div class="stat-number text-blue">{{ courseHubData.analytics?.totalSubmissions || 0 }}</div>
+                  <div class="stat-label">Total Submissions</div>
+                  <p class="stat-hint">Evaluated student exam papers</p>
+                </div>
+                <div class="glass-card stat-card">
+                  <div class="stat-number text-success">{{ courseHubData.analytics?.averageScore || 0 }}%</div>
+                  <div class="stat-label">Class Average Score</div>
+                  <p class="stat-hint">Overall academic cohort average</p>
+                </div>
+                <div class="glass-card stat-card">
+                  <div class="stat-number text-amber">{{ courseHubData.analytics?.passRate || 0 }}%</div>
+                  <div class="stat-label">Pass Rate</div>
+                  <p class="stat-hint">Students meeting passing criteria</p>
+                </div>
+              </div>
+
+              <!-- Empty Results -->
+              <div v-if="courseHubData.results?.length === 0" class="glass-card empty-dashboard-card">
+                <h3 class="empty-title">No Examination Attempts Yet</h3>
+                <p class="empty-desc">When students take quizzes assigned to this course, results and scorecards will automatically appear here.</p>
+              </div>
+
+              <!-- Results Table -->
+              <div v-else class="table-responsive glass-card p-0">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Student</th>
+                      <th>Roll Number</th>
+                      <th>Assessment</th>
+                      <th>Score</th>
+                      <th>Percentage</th>
+                      <th>Status</th>
+                      <th>Submitted Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="r in courseHubData.results" :key="r.attempt_id">
+                      <td>
+                        <div class="student-name font-bold">{{ r.student_name }}</div>
+                      </td>
+                      <td>
+                        <span class="code-mono font-bold">{{ r.roll_number }}</span>
+                      </td>
+                      <td>{{ r.assessment_title }}</td>
+                      <td>
+                        <strong>{{ r.score }}</strong> / {{ r.total_marks }}
+                      </td>
+                      <td>
+                        <span class="font-bold">{{ r.percentage }}%</span>
+                      </td>
+                      <td>
+                        <span :class="['badge', r.status === 'PASSED' ? 'badge-success' : 'badge-danger']">
+                          {{ r.status }}
+                        </span>
+                      </td>
+                      <td class="cell-date">{{ formatDate(r.submitted_at) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
@@ -2460,6 +3283,427 @@ onMounted(async () => {
                 <button type="button" class="btn btn-secondary" @click="showInspectQuizModal = false">Close</button>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- ============================================================= -->
+        <!-- MODAL 5: SINGLE STUDENT ENROLL MODAL                          -->
+        <!-- ============================================================= -->
+        <div v-if="showSingleStudentModal && selectedCourseHub" class="modal-overlay" @click.self="showSingleStudentModal = false">
+          <div class="modal-card">
+            <div class="modal-header">
+              <div class="modal-title-wrap">
+                <h3 class="modal-title">Enroll Student</h3>
+                <p class="modal-subtitle">
+                  Enrolling into: <strong>{{ selectedCourseHub.course_name }}</strong> ({{ selectedCourseHub.course_code || 'CRS' }})
+                </p>
+              </div>
+              <button class="modal-close-btn" @click="showSingleStudentModal = false">&times;</button>
+            </div>
+            <form @submit.prevent="handleEnrollSingleStudent" class="modal-body">
+              <div class="field-item mb-3">
+                <label class="field-label">Student Full Name *</label>
+                <input
+                  type="text"
+                  v-model="singleStudentForm.name"
+                  class="input-control"
+                  placeholder="e.g. Fatima Ali"
+                  required
+                />
+              </div>
+
+              <div class="form-grid mb-3">
+                <div class="field-item flex-1">
+                  <label class="field-label">University Roll Number *</label>
+                  <input
+                    type="text"
+                    v-model="singleStudentForm.rollNumber"
+                    class="input-control"
+                    placeholder="e.g. 24-ST-045"
+                    required
+                  />
+                </div>
+                <div class="field-item flex-2">
+                  <label class="field-label">Student University Email *</label>
+                  <input
+                    type="email"
+                    v-model="singleStudentForm.email"
+                    class="input-control"
+                    placeholder="e.g. 24-st-045@students.ptut.edu.pk"
+                    required
+                  />
+                </div>
+              </div>
+
+              <!-- Domain Warning Alert -->
+              <div v-if="singleDomainWarning" class="alert alert-warning mb-3">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="alert-icon">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <div class="text-xs">
+                  <strong>Domain Notice:</strong> {{ singleDomainWarning }}
+                </div>
+              </div>
+
+              <p class="text-xs text-muted">
+                ℹ️ Emails are automatically converted to lowercase. Format is verified, and existing roster enrollments are checked to prevent duplicate entries.
+              </p>
+
+              <div class="modal-footer mt-4">
+                <button type="submit" class="btn btn-primary" :disabled="isEnrollingSingle">
+                  <span v-if="isEnrollingSingle">Enrolling Student...</span>
+                  <span v-else>Enroll Student</span>
+                </button>
+                <button type="button" class="btn btn-secondary" @click="showSingleStudentModal = false">Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- ============================================================= -->
+        <!-- MODAL 6: BULK STUDENT ENROLL MODAL (PASTE OR CSV)             -->
+        <!-- ============================================================= -->
+        <div v-if="showBulkStudentModal && selectedCourseHub" class="modal-overlay" @click.self="showBulkStudentModal = false">
+          <div class="modal-card modal-lg">
+            <div class="modal-header">
+              <div class="modal-title-wrap">
+                <h3 class="modal-title">Bulk Enroll Students</h3>
+                <p class="modal-subtitle">
+                  Course: <strong>{{ selectedCourseHub.course_name }}</strong> ({{ selectedCourseHub.course_code || 'CRS' }})
+                </p>
+              </div>
+              <button class="modal-close-btn" @click="showBulkStudentModal = false">&times;</button>
+            </div>
+            <div class="modal-body">
+              <!-- Mode Tabs -->
+              <div class="flex gap-2 mb-3">
+                <button
+                  type="button"
+                  :class="['btn btn-sm', bulkEnrollMode === 'paste' ? 'btn-primary' : 'btn-secondary']"
+                  @click="bulkEnrollMode = 'paste'"
+                >
+                  📋 Paste Text List
+                </button>
+                <button
+                  type="button"
+                  :class="['btn btn-sm', bulkEnrollMode === 'csv' ? 'btn-primary' : 'btn-secondary']"
+                  @click="bulkEnrollMode = 'csv'"
+                >
+                  📁 Upload CSV File
+                </button>
+              </div>
+
+              <!-- Paste Mode -->
+              <div v-if="bulkEnrollMode === 'paste'">
+                <label class="field-label mb-1">Paste Student Records (Name, Roll Number, Email):</label>
+                <textarea
+                  v-model="bulkPasteText"
+                  @input="parseBulkInput"
+                  rows="6"
+                  class="input-control font-mono text-xs"
+                  placeholder="Fatima Ali, 24-ST-001, fatima@students.ptut.edu.pk&#10;Ali Hassan, 24-ST-002, ali.hassan@students.ptut.edu.pk&#10;Zainab Bibi, 24-ST-003, zainab@gmail.com"
+                ></textarea>
+                <p class="text-xs text-muted mt-1">
+                  💡 Supports comma-separated or tab-separated (copy-paste directly from Excel/Google Sheets). Header rows are automatically detected and skipped.
+                </p>
+              </div>
+
+              <!-- CSV Mode -->
+              <div v-else class="csv-upload-box p-4 border border-dashed rounded text-center">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="w-8 h-8 mx-auto mb-2 text-primary">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <p class="text-sm font-bold mb-1">Select CSV File</p>
+                <p class="text-xs text-muted mb-3">Expected columns: Name, Roll Number, Email</p>
+                <input
+                  type="file"
+                  accept=".csv,.txt"
+                  @change="handleCSVFileUpload"
+                  class="text-xs"
+                />
+              </div>
+
+              <!-- Validation & Parsing Summary -->
+              <div v-if="bulkParsedRows.length > 0 || bulkDuplicatesCount > 0 || bulkInvalidCount > 0" class="mt-3 p-3 bg-gray-50 rounded border">
+                <div class="flex items-center justify-between flex-wrap gap-2 text-xs">
+                  <div class="flex items-center gap-2">
+                    <span class="badge badge-success font-bold">
+                      ✓ {{ bulkParsedRows.length }} Valid Entries
+                    </span>
+                    <span v-if="bulkDuplicatesCount > 0" class="badge badge-warning font-bold">
+                      ⚠️ {{ bulkDuplicatesCount }} Duplicates Skipped
+                    </span>
+                    <span v-if="bulkInvalidCount > 0" class="badge badge-danger font-bold">
+                      ✗ {{ bulkInvalidCount }} Invalid Format Skipped
+                    </span>
+                  </div>
+                  <div v-if="bulkNonInstitutionalCount > 0" class="badge-mini-danger font-bold">
+                    ⚠️ {{ bulkNonInstitutionalCount }} Non-Institutional Domain Warning(s)
+                  </div>
+                </div>
+              </div>
+
+              <!-- Preview Table -->
+              <div v-if="bulkParsedRows.length > 0" class="mt-3 max-h-48 overflow-y-auto border rounded">
+                <table class="data-table text-xs">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Roll Number</th>
+                      <th>Normalized Email</th>
+                      <th>Domain Check</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(row, rIdx) in bulkParsedRows" :key="rIdx">
+                      <td class="font-bold">{{ row.name }}</td>
+                      <td class="font-mono">{{ row.rollNumber }}</td>
+                      <td class="font-mono">{{ row.email }}</td>
+                      <td>
+                        <span v-if="row.isNonInstitutional" class="badge-mini-danger">
+                          ⚠️ Consumer Domain
+                        </span>
+                        <span v-else class="badge badge-success text-xs">
+                          ✓ Institutional
+                        </span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="modal-footer mt-4">
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  :disabled="bulkParsedRows.length === 0 || isEnrollingBulk"
+                  @click="handleEnrollBulkStudents"
+                >
+                  <span v-if="isEnrollingBulk">Enrolling Roster...</span>
+                  <span v-else>Enroll {{ bulkParsedRows.length }} Student(s)</span>
+                </button>
+                <button type="button" class="btn btn-secondary" @click="showBulkStudentModal = false">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================= -->
+        <!-- MODAL 7: EDIT STUDENT MODAL                                   -->
+        <!-- ============================================================= -->
+        <div v-if="showEditStudentModal && selectedCourseHub" class="modal-overlay" @click.self="showEditStudentModal = false">
+          <div class="modal-card">
+            <div class="modal-header">
+              <div class="modal-title-wrap">
+                <h3 class="modal-title">Edit Student Entry</h3>
+                <p class="modal-subtitle">
+                  Update student roster information for <strong>{{ selectedCourseHub.course_name }}</strong>
+                </p>
+              </div>
+              <button class="modal-close-btn" @click="showEditStudentModal = false">&times;</button>
+            </div>
+            <form @submit.prevent="handleUpdateStudent" class="modal-body">
+              <div class="field-item mb-3">
+                <label class="field-label">Student Name *</label>
+                <input
+                  type="text"
+                  v-model="editStudentForm.name"
+                  class="input-control"
+                  required
+                />
+              </div>
+
+              <div class="form-grid mb-3">
+                <div class="field-item flex-1">
+                  <label class="field-label">Roll Number *</label>
+                  <input
+                    type="text"
+                    v-model="editStudentForm.rollNumber"
+                    class="input-control"
+                    required
+                  />
+                </div>
+                <div class="field-item flex-2">
+                  <label class="field-label">University Email *</label>
+                  <input
+                    type="email"
+                    v-model="editStudentForm.email"
+                    class="input-control"
+                    required
+                  />
+                </div>
+              </div>
+
+              <p class="text-xs text-muted">
+                ℹ️ Email will be converted to lowercase. The student will be matched to their portal submissions by this email.
+              </p>
+
+              <div class="modal-footer mt-4">
+                <button type="submit" class="btn btn-primary" :disabled="isUpdatingStudent">
+                  <span v-if="isUpdatingStudent">Saving Changes...</span>
+                  <span v-else>Save Changes</span>
+                </button>
+                <button type="button" class="btn btn-secondary" @click="showEditStudentModal = false">Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- ============================================================= -->
+        <!-- MODAL 8: REMOVE STUDENT DECISION MODAL                        -->
+        <!-- ============================================================= -->
+        <div v-if="showRemoveDecisionModal && studentToRemove" class="modal-overlay" @click.self="showRemoveDecisionModal = false">
+          <div class="modal-card">
+            <div class="modal-header">
+              <div class="modal-title-wrap">
+                <h3 class="modal-title text-danger">Remove Student with Attempts</h3>
+                <p class="modal-subtitle">
+                  {{ studentToRemove.name }} ({{ studentToRemove.roll_number }}) &bull; {{ studentToRemove.email }}
+                </p>
+              </div>
+              <button class="modal-close-btn" @click="showRemoveDecisionModal = false">&times;</button>
+            </div>
+            <form @submit.prevent="handleConfirmStudentRemoval" class="modal-body">
+              <!-- Warning Banner -->
+              <div class="alert alert-warning mb-4">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="alert-icon">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <div>
+                  <strong>Student Has Active Quiz Attempts:</strong>
+                  <p class="mt-1 text-xs">
+                    This student has already completed <strong>{{ studentAttemptsCheck.attemptCount }}</strong> quiz attempt(s) in this course. Please decide how to handle their records:
+                  </p>
+                </div>
+              </div>
+
+              <!-- Decision Options -->
+              <div class="space-y-3">
+                <label class="decision-option-card flex items-start gap-3 p-3 border rounded cursor-pointer transition hover:bg-gray-50" :class="{ 'border-primary bg-sky-50': removalResolutionChoice === 'archive' }">
+                  <input
+                    type="radio"
+                    name="removalResolution"
+                    value="archive"
+                    v-model="removalResolutionChoice"
+                    class="mt-1"
+                  />
+                  <div>
+                    <div class="font-bold text-sm text-gray-800">Archive &amp; Keep Attempts (Recommended)</div>
+                    <p class="text-xs text-muted mt-0.5">
+                      Remove the student from the active course roster, but safely preserve all their quiz submissions, scores, and integrity logs in the gradebook and historical analytics.
+                    </p>
+                  </div>
+                </label>
+
+                <label class="decision-option-card flex items-start gap-3 p-3 border rounded cursor-pointer transition hover:bg-gray-50" :class="{ 'border-primary bg-sky-50': removalResolutionChoice === 'block' }">
+                  <input
+                    type="radio"
+                    name="removalResolution"
+                    value="block"
+                    v-model="removalResolutionChoice"
+                    class="mt-1"
+                  />
+                  <div>
+                    <div class="font-bold text-sm text-gray-800">Block Removal (Cancel)</div>
+                    <p class="text-xs text-muted mt-0.5">
+                      Prevent removal completely. The student will remain enrolled in the course roster.
+                    </p>
+                  </div>
+                </label>
+
+                <label class="decision-option-card flex items-start gap-3 p-3 border rounded cursor-pointer transition hover:bg-red-50" :class="{ 'border-danger bg-red-50': removalResolutionChoice === 'purge' }">
+                  <input
+                    type="radio"
+                    name="removalResolution"
+                    value="purge"
+                    v-model="removalResolutionChoice"
+                    class="mt-1"
+                  />
+                  <div>
+                    <div class="font-bold text-sm text-danger">Permanent Purge (Wipe All Records)</div>
+                    <p class="text-xs text-muted mt-0.5">
+                      Permanently delete the student AND wipe all their quiz attempts and score history from the database. This action cannot be undone.
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              <div class="modal-footer mt-4">
+                <button
+                  type="submit"
+                  :class="['btn', removalResolutionChoice === 'purge' ? 'btn-outline-danger' : (removalResolutionChoice === 'block' ? 'btn-secondary' : 'btn-primary')]"
+                  :disabled="isRemovingStudent"
+                >
+                  <span v-if="isRemovingStudent">Processing...</span>
+                  <span v-else-if="removalResolutionChoice === 'archive'">Keep Attempts &amp; Remove Student</span>
+                  <span v-else-if="removalResolutionChoice === 'block'">Keep Student Enrolled</span>
+                  <span v-else>Purge Student &amp; All Attempts</span>
+                </button>
+                <button type="button" class="btn btn-secondary" @click="showRemoveDecisionModal = false">Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- ============================================================= -->
+        <!-- MODAL 9: ADD COURSE MATERIAL MODAL                            -->
+        <!-- ============================================================= -->
+        <div v-if="showAddMaterialModal && selectedCourseHub" class="modal-overlay" @click.self="showAddMaterialModal = false">
+          <div class="modal-card">
+            <div class="modal-header">
+              <div class="modal-title-wrap">
+                <h3 class="modal-title">Upload Course Material</h3>
+                <p class="modal-subtitle">
+                  Course: <strong>{{ selectedCourseHub.course_name }}</strong> ({{ selectedCourseHub.course_code || 'CRS' }})
+                </p>
+              </div>
+              <button class="modal-close-btn" @click="showAddMaterialModal = false">&times;</button>
+            </div>
+            <form @submit.prevent="handleAddCourseMaterial" class="modal-body">
+              <div class="field-item mb-3">
+                <label class="field-label">Material / Document Title *</label>
+                <input
+                  type="text"
+                  v-model="materialForm.title"
+                  class="input-control"
+                  placeholder="e.g. Week 1 - Introduction to Relational Algebra"
+                  required
+                />
+              </div>
+
+              <div class="form-grid mb-3">
+                <div class="field-item flex-2">
+                  <label class="field-label">File Name or Reference Document</label>
+                  <input
+                    type="text"
+                    v-model="materialForm.fileName"
+                    class="input-control"
+                    placeholder="e.g. lecture_01_relational_algebra.pdf"
+                  />
+                </div>
+                <div class="field-item flex-1">
+                  <label class="field-label">Source Type *</label>
+                  <select v-model="materialForm.sourceType" class="select-control" required>
+                    <option value="PDF">PDF Document</option>
+                    <option value="DOCX">Word Document</option>
+                    <option value="TXT">Plain Text / Notes</option>
+                    <option value="LINK">External URL / LMS Link</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="modal-footer mt-4">
+                <button type="submit" class="btn btn-primary" :disabled="isAddingMaterial">
+                  <span v-if="isAddingMaterial">Adding Material...</span>
+                  <span v-else>Add Material</span>
+                </button>
+                <button type="button" class="btn btn-secondary" @click="showAddMaterialModal = false">Cancel</button>
+              </div>
+            </form>
           </div>
         </div>
       </section>
@@ -6678,5 +7922,167 @@ onMounted(async () => {
 @keyframes scaleUp {
   from { transform: scale(0.96); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
+}
+
+/* ===================================================
+   COURSE HUB & ROSTER MANAGEMENT STYLES
+   =================================================== */
+.course-hub-page {
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+.course-hub-nav-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.course-hub-breadcrumb {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.course-hub-header-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  padding: 1.5rem;
+}
+
+.course-hub-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+}
+
+.course-hub-desc {
+  font-size: 0.85rem;
+  margin-top: 0.25rem;
+}
+
+.course-hub-header-stats {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.hub-stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  min-width: 90px;
+}
+
+.hub-stat-val {
+  font-size: 1.4rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.hub-stat-lbl {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 0.2rem;
+}
+
+.course-hub-tab-panel {
+  animation: fadeIn 0.2s ease;
+}
+
+.roster-status-strip {
+  background: #ffffff;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+}
+
+.badge-mini-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 9999px;
+}
+
+.badge-light {
+  background: #f3f4f6;
+  color: #4b5563;
+  border: 1px solid #e5e7eb;
+}
+
+.search-filter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-input {
+  padding: 0.45rem 0.75rem;
+  font-size: 0.85rem;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  outline: none;
+  background: #ffffff;
+  transition: border-color 0.15s ease;
+}
+
+.search-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+}
+
+.clear-search-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.85rem;
+}
+
+.decision-option-card {
+  border-width: 1.5px;
+}
+
+.bg-sky-50 {
+  background-color: #f0f9ff;
+}
+
+.border-primary {
+  border-color: var(--primary, #0284c7) !important;
+}
+
+.border-danger {
+  border-color: #ef4444 !important;
+}
+
+.csv-upload-box {
+  background: #f8fafc;
+  border: 2px dashed #cbd5e1;
+  border-radius: 8px;
+  cursor: pointer;
 }
 </style>

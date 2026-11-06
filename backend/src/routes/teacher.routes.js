@@ -523,4 +523,685 @@ router.delete('/ai-failures/:id', async (req, res, next) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// TEACHER COURSE HUB & ROSTER MANAGEMENT API
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const APPROVED_STUDENT_DOMAINS = [
+  'students.ptut.edu.pk',
+  'ptut.edu.pk',
+  'edu.pk',
+  'edu',
+  'ac.uk',
+  'edu.au'
+];
+
+const isApprovedStudentDomain = (email) => {
+  if (!email || !email.includes('@')) return false;
+  const domain = email.split('@')[1]?.toLowerCase().trim();
+  if (!domain) return false;
+
+  const consumerDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com', 'mail.com', 'live.com', 'aol.com'];
+  if (consumerDomains.includes(domain)) return false;
+
+  if (APPROVED_STUDENT_DOMAINS.includes(domain)) return true;
+  if (domain.endsWith('.edu.pk') || domain.endsWith('.ptut.edu.pk') || domain.endsWith('.edu') || domain.endsWith('.ac.uk')) {
+    return true;
+  }
+  return false;
+};
+
+const isValidEmailFormat = (email) => {
+  if (!email || typeof email !== 'string') return false;
+  const trimmed = email.trim();
+  const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  return re.test(trimmed);
+};
+
+// Initial course materials cache for courses with 0 materials
+let courseMaterialsStore = [
+  {
+    material_id: 101,
+    course_id: 11,
+    title: 'Lecture 01: Cryptographic Fundamentals & Ciphers',
+    file_name: 'lec01-crypto-foundations.pdf',
+    source_type: 'PDF',
+    created_at: new Date(Date.now() - 3600000 * 48).toISOString()
+  },
+  {
+    material_id: 102,
+    course_id: 11,
+    title: 'Lab 03 Guide: Symmetric AES-256 vs Asymmetric RSA',
+    file_name: 'lab03-aes-rsa-implementation.pdf',
+    source_type: 'PDF',
+    created_at: new Date(Date.now() - 3600000 * 24).toISOString()
+  }
+];
+
+/**
+ * @route GET /api/v1/teacher/courses/:id/hub
+ * @desc Complete Course Page Hub:
+ * Tab 1: Students (Roster, sign-in status, domain verification)
+ * Tab 2: Materials (Lecture notes, syllabi, slides)
+ * Tab 3: Assessments (Draft & Published course assessments)
+ * Tab 4: Results (Class marks, averages, pass/fail status)
+ */
+router.get('/courses/:id/hub', async (req, res, next) => {
+  try {
+    const courseId = parseInt(req.params.id, 10);
+    const uniId = req.user.university_id || 1;
+    const client = supabaseAdmin || supabase;
+
+    // 1. Get Course Info
+    let course = null;
+    if (client) {
+      const { data: cData } = await client
+        .from('courses')
+        .select('course_id, course_name, course_code, department_id, user_id, status, created_at')
+        .eq('course_id', courseId)
+        .maybeSingle();
+      course = cData;
+    }
+
+    if (!course) {
+      const fallback = await query(`SELECT * FROM public.courses WHERE course_id = $1`, [courseId]);
+      course = fallback.rows[0];
+    }
+
+    if (!course) {
+      return res.status(404).json({ status: 'fail', message: 'Course not found.' });
+    }
+
+    // 2. Get Department Info if available
+    let department = null;
+    if (course.department_id && client) {
+      const { data: dData } = await client
+        .from('departments')
+        .select('name, code')
+        .eq('department_id', course.department_id)
+        .maybeSingle();
+      department = dData;
+    }
+    course.department_name = department?.name || 'Academic Department';
+    course.department_code = department?.code || 'DEPT';
+
+    // 3. Get Enrolled Students & check whether they have signed in
+    let students = [];
+    if (client) {
+      const { data: sList } = await client
+        .from('students')
+        .select('student_id, name, roll_number, email, created_at, course_id')
+        .eq('course_id', courseId)
+        .order('name', { ascending: true });
+      
+      const rawStudents = sList || [];
+
+      // Check registered users to determine sign-in status
+      const { data: uList } = await client
+        .from('users')
+        .select('user_id, email, name, is_active, created_at')
+        .ilike('role', 'STUDENT');
+
+      const userMap = new Map();
+      (uList || []).forEach(u => {
+        if (u.email) userMap.set(u.email.toLowerCase().trim(), u);
+      });
+
+      students = rawStudents.map(s => {
+        const normalized = (s.email || '').toLowerCase().trim();
+        const matchedUser = userMap.get(normalized);
+        const isApproved = isApprovedStudentDomain(normalized);
+        
+        // Count student attempts
+        const attemptsCount = teacherReviewAttempts.filter(a => {
+          return (a.course_code === course.course_code || a.course_name === course.course_name) &&
+                 (a.roll_number === s.roll_number || (a.student_email && a.student_email.toLowerCase() === normalized));
+        }).length;
+
+        return {
+          student_id: s.student_id,
+          name: s.name,
+          roll_number: s.roll_number,
+          email: normalized,
+          created_at: s.created_at,
+          has_signed_in: Boolean(matchedUser),
+          last_sign_in: matchedUser ? (matchedUser.created_at || 'Recently active') : null,
+          is_approved_domain: isApproved,
+          attempt_count: attemptsCount
+        };
+      });
+    }
+
+    // 4. Get Materials for Course
+    let materials = [];
+    if (client) {
+      const { data: mList } = await client
+        .from('materials')
+        .select('*')
+        .eq('course_id', courseId)
+        .order('created_at', { ascending: false });
+      materials = mList || [];
+    }
+    if (materials.length === 0) {
+      materials = courseMaterialsStore.filter(m => m.course_id === courseId);
+    }
+
+    // 5. Get Assessments for this specific Course
+    let assessments = [];
+    if (client) {
+      const { data: aList } = await client
+        .from('assessments')
+        .select('*')
+        .eq('course_id', courseId)
+        .order('created_at', { ascending: false });
+      assessments = (aList || []).map(a => ({
+        ...a,
+        questions_count: Array.isArray(a.questions) ? a.questions.length : (a.questions ? JSON.parse(a.questions || '[]').length : 0)
+      }));
+    }
+
+    // 6. Get Results & Attempts for this Course
+    const courseAttempts = teacherReviewAttempts.filter(a => {
+      return a.course_code === course.course_code || a.course_name === course.course_name;
+    });
+
+    const results = courseAttempts.map(a => {
+      const pct = Math.round((a.score / (a.total_marks || 100)) * 100);
+      return {
+        attempt_id: a.attempt_id,
+        student_name: a.student_name,
+        roll_number: a.roll_number,
+        student_email: a.student_email,
+        assessment_title: a.assessment_title,
+        score: a.score,
+        total_marks: a.total_marks,
+        percentage: pct,
+        status: pct >= 50 ? 'PASSED' : 'FAILED',
+        is_flagged: a.is_flagged,
+        submitted_at: a.submitted_at
+      };
+    });
+
+    const totalScores = results.reduce((acc, curr) => acc + curr.score, 0);
+    const avgScore = results.length > 0 ? Math.round(totalScores / results.length) : 0;
+    const passedCount = results.filter(r => r.status === 'PASSED').length;
+    const passRate = results.length > 0 ? Math.round((passedCount / results.length) * 100) : 0;
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        course,
+        students,
+        materials,
+        assessments,
+        results,
+        analytics: {
+          totalEnrolled: students.length,
+          signedInCount: students.filter(s => s.has_signed_in).length,
+          neverSignedInCount: students.filter(s => !s.has_signed_in).length,
+          nonInstitutionalCount: students.filter(s => !s.is_approved_domain).length,
+          totalAssessments: assessments.length,
+          totalSubmissions: results.length,
+          averageScore: avgScore,
+          passRate: passRate
+        },
+        approvedDomains: APPROVED_STUDENT_DOMAINS
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route POST /api/v1/teacher/courses/:id/students
+ * @desc Add student one-by-one with lowercased email, duplicate detection, and domain warning
+ */
+router.post('/courses/:id/students', async (req, res, next) => {
+  try {
+    const courseId = parseInt(req.params.id, 10);
+    const { name, rollNumber, email, allowNonInstitutional = false } = req.body;
+    const uniId = req.user.university_id || 1;
+    const client = supabaseAdmin || supabase;
+
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return res.status(400).json({ status: 'fail', message: 'Student full name is required.' });
+    }
+    if (!rollNumber || typeof rollNumber !== 'string' || rollNumber.trim().length === 0) {
+      return res.status(400).json({ status: 'fail', message: 'Roll number is required.' });
+    }
+    if (!email || !isValidEmailFormat(email)) {
+      return res.status(400).json({ status: 'fail', message: 'Valid university email format is required.' });
+    }
+
+    // 1. Lowercase and normalize
+    const normalizedEmail = email.trim().toLowerCase();
+    const cleanName = name.trim();
+    const cleanRoll = rollNumber.trim().toUpperCase();
+
+    // 2. Detect duplicate enrollment in this course
+    if (client) {
+      const { data: existing } = await client
+        .from('students')
+        .select('student_id, email, roll_number')
+        .eq('course_id', courseId)
+        .or(`email.ilike.${normalizedEmail},roll_number.eq.${cleanRoll}`);
+
+      if (existing && existing.length > 0) {
+        return res.status(400).json({
+          status: 'fail',
+          message: `Duplicate detected: A student with email "${normalizedEmail}" or roll number "${cleanRoll}" is already enrolled in this course.`
+        });
+      }
+    }
+
+    // 3. Domain Check & Warning
+    const isApprovedDomain = isApprovedStudentDomain(normalizedEmail);
+    const domainWarning = !isApprovedDomain
+      ? `Email domain "@${normalizedEmail.split('@')[1]}" is non-institutional. Official university student domain recommended.`
+      : null;
+
+    // 4. Insert Student
+    let createdStudent = null;
+    if (client) {
+      const { data: inserted, error: insErr } = await client
+        .from('students')
+        .insert({
+          course_id: courseId,
+          university_id: uniId,
+          name: cleanName,
+          roll_number: cleanRoll,
+          email: normalizedEmail
+        })
+        .select('*')
+        .single();
+
+      if (insErr) {
+        return res.status(400).json({ status: 'fail', message: insErr.message });
+      }
+      createdStudent = inserted;
+    }
+
+    res.status(201).json({
+      status: 'success',
+      message: `Enrolled student "${cleanName}" (${cleanRoll}).` + (domainWarning ? ` (Note: ${domainWarning})` : ''),
+      data: {
+        student: {
+          ...createdStudent,
+          has_signed_in: false,
+          is_approved_domain: isApprovedDomain
+        },
+        domainWarning
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route POST /api/v1/teacher/courses/:id/students/bulk
+ * @desc Add students in bulk from pasted list or CSV:
+ * - Lowercases emails
+ * - Validates formats
+ * - In-batch duplicate detection & course duplicate detection
+ * - Flags non-institutional domains
+ */
+router.post('/courses/:id/students/bulk', async (req, res, next) => {
+  try {
+    const courseId = parseInt(req.params.id, 10);
+    const { students = [] } = req.body;
+    const uniId = req.user.university_id || 1;
+    const client = supabaseAdmin || supabase;
+
+    if (!Array.isArray(students) || students.length === 0) {
+      return res.status(400).json({ status: 'fail', message: 'No student records provided for bulk enrollment.' });
+    }
+
+    // 1. Fetch currently enrolled students to detect duplicates
+    const existingEmails = new Set();
+    const existingRolls = new Set();
+    if (client) {
+      const { data: curList } = await client
+        .from('students')
+        .select('email, roll_number')
+        .eq('course_id', courseId);
+      (curList || []).forEach(s => {
+        if (s.email) existingEmails.add(s.email.toLowerCase().trim());
+        if (s.roll_number) existingRolls.add(s.roll_number.toUpperCase().trim());
+      });
+    }
+
+    const seenInBatchEmails = new Set();
+    const seenInBatchRolls = new Set();
+
+    const validToInsert = [];
+    const skippedDuplicates = [];
+    const invalidRecords = [];
+    let nonInstitutionalCount = 0;
+
+    for (const item of students) {
+      const rawName = (item.name || '').trim();
+      const rawRoll = (item.rollNumber || item.roll_number || '').trim().toUpperCase();
+      const rawEmail = (item.email || '').trim().toLowerCase();
+
+      // Check format
+      if (!rawName || !rawRoll || !isValidEmailFormat(rawEmail)) {
+        invalidRecords.push({ name: rawName, rollNumber: rawRoll, email: rawEmail, reason: 'Missing name/roll or invalid email format' });
+        continue;
+      }
+
+      // Check duplicate in batch
+      if (seenInBatchEmails.has(rawEmail) || seenInBatchRolls.has(rawRoll)) {
+        skippedDuplicates.push({ name: rawName, rollNumber: rawRoll, email: rawEmail, reason: 'Duplicate in submitted list' });
+        continue;
+      }
+
+      // Check duplicate against already enrolled
+      if (existingEmails.has(rawEmail) || existingRolls.has(rawRoll)) {
+        skippedDuplicates.push({ name: rawName, rollNumber: rawRoll, email: rawEmail, reason: 'Already enrolled in course' });
+        continue;
+      }
+
+      if (!isApprovedStudentDomain(rawEmail)) {
+        nonInstitutionalCount++;
+      }
+
+      seenInBatchEmails.add(rawEmail);
+      seenInBatchRolls.add(rawRoll);
+
+      validToInsert.push({
+        course_id: courseId,
+        university_id: uniId,
+        name: rawName,
+        roll_number: rawRoll,
+        email: rawEmail
+      });
+    }
+
+    let insertedRecords = [];
+    if (validToInsert.length > 0 && client) {
+      const { data: insData, error: insErr } = await client
+        .from('students')
+        .insert(validToInsert)
+        .select('*');
+
+      if (insErr) {
+        return res.status(400).json({ status: 'fail', message: insErr.message });
+      }
+      insertedRecords = insData || [];
+    }
+
+    res.status(201).json({
+      status: 'success',
+      message: `Enrolled ${insertedRecords.length} student(s) successfully. ${skippedDuplicates.length} duplicate(s) skipped.` +
+        (nonInstitutionalCount > 0 ? ` ⚠️ ${nonInstitutionalCount} student(s) use non-institutional domains.` : ''),
+      data: {
+        enrolledCount: insertedRecords.length,
+        skippedDuplicatesCount: skippedDuplicates.length,
+        invalidCount: invalidRecords.length,
+        nonInstitutionalCount,
+        enrolledStudents: insertedRecords,
+        skippedDuplicates,
+        invalidRecords
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route PUT /api/v1/teacher/courses/:id/students/:studentId
+ * @desc Edit student entry: name, roll number, or lowercased email
+ */
+router.put('/courses/:id/students/:studentId', async (req, res, next) => {
+  try {
+    const courseId = parseInt(req.params.id, 10);
+    const studentId = parseInt(req.params.studentId, 10);
+    const { name, rollNumber, email } = req.body;
+    const client = supabaseAdmin || supabase;
+
+    if (!name || !rollNumber || !isValidEmailFormat(email)) {
+      return res.status(400).json({ status: 'fail', message: 'Name, roll number, and valid email format are required.' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const cleanName = name.trim();
+    const cleanRoll = rollNumber.trim().toUpperCase();
+
+    if (client) {
+      const { data, error } = await client
+        .from('students')
+        .update({
+          name: cleanName,
+          roll_number: cleanRoll,
+          email: normalizedEmail
+        })
+        .eq('student_id', studentId)
+        .eq('course_id', courseId)
+        .select('*')
+        .single();
+
+      if (error) {
+        return res.status(400).json({ status: 'fail', message: error.message });
+      }
+
+      return res.status(200).json({
+        status: 'success',
+        message: `Student details for "${cleanName}" updated.`,
+        data: { student: data }
+      });
+    }
+
+    res.status(200).json({ status: 'success', message: 'Student updated.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route GET /api/v1/teacher/courses/:id/students/:studentId/attempts-check
+ * @desc Check if a student has any quiz attempts on record for this course
+ */
+router.get('/courses/:id/students/:studentId/attempts-check', async (req, res, next) => {
+  try {
+    const courseId = parseInt(req.params.id, 10);
+    const studentId = parseInt(req.params.studentId, 10);
+    const client = supabaseAdmin || supabase;
+
+    let student = null;
+    if (client) {
+      const { data } = await client
+        .from('students')
+        .select('*')
+        .eq('student_id', studentId)
+        .eq('course_id', courseId)
+        .maybeSingle();
+      student = data;
+    }
+
+    if (!student) {
+      return res.status(404).json({ status: 'fail', message: 'Student not found in course roster.' });
+    }
+
+    const studentEmail = (student.email || '').toLowerCase().trim();
+    const studentRoll = (student.roll_number || '').toUpperCase().trim();
+
+    // Check attempts in memory & Supabase
+    const matchedAttempts = teacherReviewAttempts.filter(a => {
+      return (a.student_id === studentId || a.roll_number === studentRoll || (a.student_email && a.student_email.toLowerCase() === studentEmail));
+    });
+
+    const hasAttempts = matchedAttempts.length > 0;
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        hasAttempts,
+        attemptCount: matchedAttempts.length,
+        student: {
+          student_id: student.student_id,
+          name: student.name,
+          roll_number: student.roll_number,
+          email: student.email
+        },
+        attempts: matchedAttempts
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route DELETE /api/v1/teacher/courses/:id/students/:studentId
+ * @desc Decide what happens when student who has attempts is removed:
+ * - resolution = 'block'   -> block removal
+ * - resolution = 'archive' -> keep attempts on record, unenroll student from future tests
+ * - resolution = 'purge'   -> permanently remove student & wipe attempts
+ */
+router.delete('/courses/:id/students/:studentId', async (req, res, next) => {
+  try {
+    const courseId = parseInt(req.params.id, 10);
+    const studentId = parseInt(req.params.studentId, 10);
+    const { resolution = 'archive' } = req.query;
+    const client = supabaseAdmin || supabase;
+
+    if (resolution === 'block') {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Removal blocked by educator: Student has completed assessment attempts on record.'
+      });
+    }
+
+    let deletedStudent = null;
+    if (client) {
+      const { data: sData } = await client
+        .from('students')
+        .select('*')
+        .eq('student_id', studentId)
+        .eq('course_id', courseId)
+        .maybeSingle();
+      deletedStudent = sData;
+
+      const { error: delErr } = await client
+        .from('students')
+        .delete()
+        .eq('student_id', studentId)
+        .eq('course_id', courseId);
+
+      if (delErr) {
+        return res.status(400).json({ status: 'fail', message: delErr.message });
+      }
+    }
+
+    if (resolution === 'purge' && deletedStudent) {
+      const email = (deletedStudent.email || '').toLowerCase().trim();
+      const roll = (deletedStudent.roll_number || '').toUpperCase().trim();
+      teacherReviewAttempts = teacherReviewAttempts.filter(a => {
+        return !(a.student_id === studentId || a.roll_number === roll || (a.student_email && a.student_email.toLowerCase() === email));
+      });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: resolution === 'archive'
+        ? `Student unrolled from course. All assessment attempts and historical test records have been preserved.`
+        : `Student and all related test records permanently purged.`
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route POST /api/v1/teacher/courses/:id/materials
+ * @desc Add lecture slide, syllabus, or study material to course
+ */
+router.post('/courses/:id/materials', async (req, res, next) => {
+  try {
+    const courseId = parseInt(req.params.id, 10);
+    const { title, fileName, sourceType = 'PDF' } = req.body;
+    const userId = req.user.user_id;
+    const client = supabaseAdmin || supabase;
+
+    if (!title || typeof title !== 'string' || title.trim().length === 0) {
+      return res.status(400).json({ status: 'fail', message: 'Material title is required.' });
+    }
+
+    const cleanTitle = title.trim();
+    const cleanFileName = (fileName || `${cleanTitle.toLowerCase().replace(/[^a-z0-9]/g, '-')}.pdf`).trim();
+
+    let createdMaterial = null;
+    if (client) {
+      const { data, error } = await client
+        .from('materials')
+        .insert({
+          course_id: courseId,
+          user_id: userId,
+          title: cleanTitle,
+          file_name: cleanFileName,
+          source_type: 'PDF'
+        })
+        .select('*')
+        .single();
+
+      if (!error && data) {
+        createdMaterial = data;
+      }
+    }
+
+    if (!createdMaterial) {
+      createdMaterial = {
+        material_id: Date.now(),
+        course_id: courseId,
+        user_id: userId,
+        title: cleanTitle,
+        file_name: cleanFileName,
+        source_type: 'PDF',
+        created_at: new Date().toISOString()
+      };
+      courseMaterialsStore.unshift(createdMaterial);
+    }
+
+    res.status(201).json({
+      status: 'success',
+      message: `Course material "${cleanTitle}" added.`,
+      data: { material: createdMaterial }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route DELETE /api/v1/teacher/courses/:id/materials/:materialId
+ * @desc Delete course material
+ */
+router.delete('/courses/:id/materials/:materialId', async (req, res, next) => {
+  try {
+    const courseId = parseInt(req.params.id, 10);
+    const materialId = parseInt(req.params.materialId, 10);
+    const client = supabaseAdmin || supabase;
+
+    if (client) {
+      await client
+        .from('materials')
+        .delete()
+        .eq('material_id', materialId)
+        .eq('course_id', courseId);
+    }
+
+    courseMaterialsStore = courseMaterialsStore.filter(m => m.material_id !== materialId);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Course material deleted.'
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

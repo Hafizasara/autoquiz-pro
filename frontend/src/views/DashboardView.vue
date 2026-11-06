@@ -1680,7 +1680,7 @@ const handleDeleteCourseMaterial = async (materialId) => {
 
 onMounted(async () => {
   if (auth.isTeacher.value) {
-    activeSection.value = 'dashboard';
+    activeSection.value = 'courses';
     await loadTeacherData();
   } else if (auth.isAdmin.value) {
     await loadAdminDashboard();
@@ -1767,13 +1767,6 @@ onMounted(async () => {
 
         <!-- TEACHER nav -->
         <template v-if="auth.isTeacher.value">
-          <button :class="['sidebar-nav-item', activeSection === 'dashboard' && 'active']" @click="activeSection = 'dashboard'">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
-              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-              <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
-            </svg>
-            <span v-if="!sidebarCollapsed">Overview</span>
-          </button>
           <button :class="['sidebar-nav-item', activeSection === 'courses' && 'active']" @click="activeSection = 'courses'">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
               <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
@@ -1976,351 +1969,6 @@ onMounted(async () => {
       <!-- VIEW 2: TEACHER DASHBOARD                     -->
       <!-- ============================================== -->
       <section v-if="auth.isTeacher.value" class="role-view">
-        <!-- Banner Card -->
-        <div class="glass-card banner-card">
-          <div class="badge badge-info">
-            <span class="badge-dot"></span> {{ auth.user.value?.universityName || 'Academic Faculty' }}
-          </div>
-          <h2 class="banner-title">Educator Studio &bull; {{ auth.user.value?.name }}</h2>
-          <p class="banner-text">
-            Manage your courses, draft &amp; published assessments, review student submissions with proctoring flags, export evaluation packages, and monitor AI generation health.
-          </p>
-        </div>
-
-        <!-- Shortcuts Bar: New Course, New Assessment, Quick Export, Review Queue -->
-        <div class="glass-card quick-action-bar">
-          <div class="quick-action-info">
-            <h4 class="quick-action-title">Educator Action Shortcuts</h4>
-            <p class="quick-action-sub">Quickly launch new courses, design assessments, export test papers, or clear pending reviews.</p>
-          </div>
-          <div class="quick-action-buttons">
-            <button class="btn btn-primary btn-sm" @click="showTeacherNewCourseModal = true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
-                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-              </svg>
-              + New Course
-            </button>
-            <router-link to="/assessments/create" class="btn btn-primary btn-sm">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
-                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
-              </svg>
-              + New Assessment
-            </router-link>
-            <button class="btn btn-secondary btn-sm" @click="openExportModal()">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="7 10 12 15 17 10"/>
-                <line x1="12" y1="15" x2="12" y2="3"/>
-              </svg>
-              Quick Export
-            </button>
-            <button class="btn btn-secondary btn-sm" @click="activeSection = 'reviews'">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
-                <path d="M9 11l3 3L22 4"/>
-                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
-              </svg>
-              Reviews ({{ teacherReviewQueue.length }})
-              <span v-if="teacherFlaggedCount > 0" class="badge-mini-danger ml-1">{{ teacherFlaggedCount }} Flagged</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- Metric Stat Cards -->
-        <div class="grid-cards">
-          <div class="glass-card stat-card" @click="activeSection = 'courses'">
-            <div class="stat-number text-blue">{{ educatorDashboardStats.coursesCount }}</div>
-            <div class="stat-label">My Courses</div>
-            <p class="stat-hint">Assigned &amp; created curriculum classes</p>
-          </div>
-
-          <div class="glass-card stat-card" @click="activeSection = 'assessments'">
-            <div class="stat-number text-amber">{{ educatorDashboardStats.draftsCount + educatorDashboardStats.publishedCount }}</div>
-            <div class="stat-label">Assessments &amp; Quizzes</div>
-            <p class="stat-hint">{{ educatorDashboardStats.publishedCount }} published &bull; {{ educatorDashboardStats.draftsCount }} drafts</p>
-          </div>
-
-          <div class="glass-card stat-card" @click="activeSection = 'reviews'">
-            <div class="stat-number" :class="{ 'text-danger': educatorDashboardStats.flaggedCount > 0 }">
-              {{ educatorDashboardStats.waitingReviewCount }}
-            </div>
-            <div class="stat-label">Waiting for Review</div>
-            <p class="stat-hint">
-              <span v-if="educatorDashboardStats.flaggedCount > 0" class="text-danger font-bold">⚠️ {{ educatorDashboardStats.flaggedCount }} flagged</span>
-              <span v-else>0 flagged for integrity</span>
-              &bull; Needs grade release
-            </p>
-          </div>
-
-          <div class="glass-card stat-card" @click="activeSection = 'exports'">
-            <div class="stat-number text-primary">{{ educatorDashboardStats.exportsCount }}</div>
-            <div class="stat-label">Exports &amp; AI Health</div>
-            <p class="stat-hint">{{ educatorDashboardStats.exportsCount }} export packages &bull; AI operational</p>
-          </div>
-        </div>
-
-        <!-- ============================================== -->
-        <!-- MAIN OVERVIEW VIEW (activeSection === 'dashboard') -->
-        <!-- ============================================== -->
-        <div v-if="activeSection === 'dashboard'" class="dashboard-overview-container mt-4">
-          <div class="dashboard-overview-grid">
-            <!-- WIDGET 1: SUBMISSIONS AWAITING REVIEW -->
-            <div class="glass-card overview-card">
-              <div class="overview-card-header">
-                <div>
-                  <h3 class="overview-card-title flex items-center gap-2">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="title-icon">
-                      <path d="M9 11l3 3L22 4"/>
-                      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
-                    </svg>
-                    Submissions Waiting Review
-                  </h3>
-                  <p class="overview-card-desc">Student quiz attempts requiring evaluation or proctoring check.</p>
-                </div>
-                <button class="btn btn-secondary btn-xs" @click="activeSection = 'reviews'">
-                  View All ({{ teacherReviewQueue.length }}) &rarr;
-                </button>
-              </div>
-
-              <div v-if="teacherReviewQueue.length === 0" class="p-6 text-center text-muted">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="w-8 h-8 mx-auto mb-2 text-success">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                  <path d="M22 4L12 14.01l-3-3"/>
-                </svg>
-                <div class="text-sm font-bold text-gray-700">All submissions reviewed!</div>
-                <div class="text-xs mt-1">No student attempts are currently pending your evaluation.</div>
-              </div>
-
-              <div v-else class="overview-list">
-                <div
-                  v-for="att in teacherReviewQueue.slice(0, 3)"
-                  :key="att.attempt_id"
-                  class="overview-item"
-                >
-                  <div>
-                    <div class="font-bold text-gray-800">{{ att.student_name }} ({{ att.roll_number }})</div>
-                    <div class="text-xs text-muted mt-0.5">{{ att.assessment_title }} &bull; {{ att.course_code }}</div>
-                    <div v-if="att.is_flagged" class="badge-mini-danger font-bold mt-1">
-                      ⚠️ Flagged: {{ att.flag_reasons[0] || 'Proctoring flag' }}
-                    </div>
-                  </div>
-                  <div class="text-right">
-                    <div class="font-bold text-gray-700 text-xs">{{ att.score }} / {{ att.total_marks }} pts</div>
-                    <button class="btn btn-primary btn-xs mt-1" @click="openReviewModal(att)">
-                      Review
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- WIDGET 2: RECENT ASSESSMENTS & DRAFTS -->
-            <div class="glass-card overview-card">
-              <div class="overview-card-header">
-                <div>
-                  <h3 class="overview-card-title flex items-center gap-2">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="title-icon">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                      <polyline points="14 2 14 8 20 8"/>
-                    </svg>
-                    Recent Assessments &amp; Quizzes
-                  </h3>
-                  <p class="overview-card-desc">Recently created draft papers and active examination modules.</p>
-                </div>
-                <button class="btn btn-secondary btn-xs" @click="activeSection = 'assessments'">
-                  View All ({{ teacherDrafts.length + teacherPublished.length }}) &rarr;
-                </button>
-              </div>
-
-              <div v-if="teacherDrafts.length === 0 && teacherPublished.length === 0" class="p-6 text-center text-muted">
-                <div class="text-sm font-bold text-gray-700">No assessments created yet</div>
-                <div class="text-xs mt-1">Generate your first AI-assisted quiz or draft exam.</div>
-                <router-link to="/assessments/create" class="btn btn-primary btn-xs mt-3 inline-block">
-                  + Create Assessment
-                </router-link>
-              </div>
-
-              <div v-else class="overview-list">
-                <div
-                  v-for="p in teacherPublished.slice(0, 2)"
-                  :key="'pub-' + p.assessment_id"
-                  class="overview-item"
-                >
-                  <div>
-                    <div class="font-bold text-gray-800">{{ p.title }}</div>
-                    <div class="text-xs text-muted mt-0.5">{{ p.course_code || 'CRS' }} &bull; {{ p.duration_minutes || 60 }} mins &bull; {{ p.total_marks || 100 }} pts</div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <span class="badge badge-success text-xs">
-                      <span class="badge-dot"></span> Live
-                    </span>
-                    <button class="btn btn-secondary btn-xs" @click="openInspectQuizModal(p)">Inspect</button>
-                  </div>
-                </div>
-
-                <div
-                  v-for="d in teacherDrafts.slice(0, 2)"
-                  :key="'draft-' + d.assessment_id"
-                  class="overview-item"
-                >
-                  <div>
-                    <div class="font-bold text-gray-800">{{ d.title }}</div>
-                    <div class="text-xs text-muted mt-0.5">{{ d.course_code || 'CRS' }} &bull; Draft &bull; {{ formatDate(d.created_at) }}</div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <span class="badge badge-warning text-xs">
-                      <span class="badge-dot"></span> Draft
-                    </span>
-                    <button class="btn btn-primary btn-xs" @click="handlePublishDraft(d.assessment_id)">Publish</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- WIDGET 3: MY COURSES QUICK ACCESS -->
-            <div class="glass-card overview-card">
-              <div class="overview-card-header">
-                <div>
-                  <h3 class="overview-card-title flex items-center gap-2">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="title-icon">
-                      <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
-                    </svg>
-                    My Active Courses
-                  </h3>
-                  <p class="overview-card-desc">Your curriculum courses and active student enrollment rosters.</p>
-                </div>
-                <button class="btn btn-secondary btn-xs" @click="activeSection = 'courses'">
-                  Manage Courses &rarr;
-                </button>
-              </div>
-
-              <div v-if="teacherCourses.length === 0" class="p-6 text-center text-muted">
-                <div class="text-sm font-bold text-gray-700">No courses assigned yet</div>
-                <div class="text-xs mt-1">Register a new curriculum course to begin enrolling students.</div>
-                <button class="btn btn-primary btn-xs mt-3" @click="showTeacherNewCourseModal = true">+ Register Course</button>
-              </div>
-
-              <div v-else class="overview-list">
-                <div
-                  v-for="c in teacherCourses.slice(0, 3)"
-                  :key="c.course_id"
-                  class="overview-item"
-                >
-                  <div>
-                    <div class="font-bold text-gray-800">{{ c.course_name }}</div>
-                    <div class="text-xs text-muted mt-0.5">
-                      <span class="code-mono font-bold">{{ c.course_code || 'CRS' }}</span> &bull; {{ c.student_count || 0 }} Students Enrolled
-                    </div>
-                  </div>
-                  <button class="btn btn-secondary btn-xs" @click="openCourseHub(c)">
-                    Course Hub &rarr;
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- WIDGET 4: SYSTEM HEALTH & EXPORTS -->
-            <div class="glass-card overview-card">
-              <div class="overview-card-header">
-                <div>
-                  <h3 class="overview-card-title flex items-center gap-2">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="title-icon">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                      <polyline points="7 10 12 15 17 10"/>
-                      <line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
-                    Exports &amp; Engine Status
-                  </h3>
-                  <p class="overview-card-desc">Recent assessment packages and AI generator engine status.</p>
-                </div>
-                <button class="btn btn-secondary btn-xs" @click="activeSection = 'exports'">
-                  View Details &rarr;
-                </button>
-              </div>
-
-              <div class="overview-list">
-                <div class="overview-item">
-                  <div class="flex items-center gap-2">
-                    <span class="badge-dot" style="background-color: #10b981;"></span>
-                    <span class="font-bold text-gray-800">AI Generation Engine:</span>
-                    <span class="badge badge-success text-xs">Operational</span>
-                  </div>
-                  <span class="text-xs text-muted">Gemini 1.5 Flash</span>
-                </div>
-
-                <div v-if="teacherExports.length > 0" class="overview-item">
-                  <div>
-                    <div class="font-bold text-gray-700 text-xs">Latest Generated Package:</div>
-                    <div class="text-xs text-muted">{{ teacherExports[0].title }} ({{ teacherExports[0].format }})</div>
-                  </div>
-                  <button class="btn btn-primary btn-xs" @click="handleDownloadExport(teacherExports[0])">Download</button>
-                </div>
-                <div v-else class="text-muted text-center py-2 text-xs">
-                  No export packages generated yet.
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- ============================================================= -->
-        <!-- IN-PAGE NAVIGATION TABS (Shown when viewing any dedicated tab) -->
-        <!-- ============================================================= -->
-        <div v-if="activeSection !== 'dashboard'" class="admin-tabs mt-4 mb-4">
-          <button
-            :class="['admin-tab-btn', activeSection === 'dashboard' && 'active']"
-            @click="activeSection = 'dashboard'"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
-              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-              <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
-            </svg>
-            Overview
-          </button>
-          <button
-            :class="['admin-tab-btn', activeSection === 'courses' && 'active']"
-            @click="activeSection = 'courses'"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
-              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
-            </svg>
-            My Courses ({{ teacherCourses.length }})
-          </button>
-          <button
-            :class="['admin-tab-btn', activeSection === 'assessments' && 'active']"
-            @click="activeSection = 'assessments'"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-            </svg>
-            Assessments ({{ teacherDrafts.length + teacherPublished.length }})
-          </button>
-          <button
-            :class="['admin-tab-btn', activeSection === 'reviews' && 'active']"
-            @click="activeSection = 'reviews'"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
-              <path d="M9 11l3 3L22 4"/>
-              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
-            </svg>
-            Review Queue ({{ teacherReviewQueue.length }})
-            <span v-if="teacherFlaggedCount > 0" class="badge-mini-danger">⚠️ {{ teacherFlaggedCount }} Flagged</span>
-          </button>
-          <button
-            :class="['admin-tab-btn', activeSection === 'exports' && 'active']"
-            @click="activeSection = 'exports'"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tab-icon">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-            Exports &amp; AI Health ({{ teacherExports.length }})
-            <span v-if="teacherAiFailures.filter(f => f.status !== 'RESOLVED').length > 0" class="badge-mini-amber">
-              {{ teacherAiFailures.filter(f => f.status !== 'RESOLVED').length }} AI Alerts
-            </span>
-          </button>
-        </div>
 
         <!-- ============================================== -->
         <!-- SECTION 1: MY COURSES & DEDICATED COURSE PAGE (HUB)-->
@@ -2346,7 +1994,7 @@ onMounted(async () => {
             <!-- Course Search Filter Input -->
             <div class="search-filter-row mb-4">
               <div class="search-input-wrap flex-1">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="search-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="search-icon">
                   <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                 </svg>
                 <input
@@ -3608,7 +3256,7 @@ onMounted(async () => {
 
               <!-- CSV Mode -->
               <div v-else class="csv-upload-box p-4 border border-dashed rounded text-center">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="w-8 h-8 mx-auto mb-2 text-primary">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="upload-icon">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                   <polyline points="17 8 12 3 7 8"/>
                   <line x1="12" y1="3" x2="12" y2="15"/>
@@ -5912,6 +5560,108 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/* ===================================================
+   SVG & ICON SIZE GUARDS - UNIVERSAL ABSOLUTE BOUNDS
+   =================================================== */
+svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  max-width: 100%;
+  max-height: 100%;
+  flex-shrink: 0;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.title-icon {
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+  flex-shrink: 0;
+}
+
+.btn-icon {
+  width: 15px !important;
+  height: 15px !important;
+  min-width: 15px !important;
+  min-height: 15px !important;
+  flex-shrink: 0;
+}
+
+.btn-icon-xs {
+  width: 13px !important;
+  height: 13px !important;
+  min-width: 13px !important;
+  min-height: 13px !important;
+  flex-shrink: 0;
+}
+
+.nav-icon {
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+  flex-shrink: 0;
+}
+
+.tab-icon {
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+  flex-shrink: 0;
+}
+
+.search-icon {
+  width: 15px !important;
+  height: 15px !important;
+  min-width: 15px !important;
+  min-height: 15px !important;
+  color: var(--text-secondary, #64748b) !important;
+  margin-left: 0.75rem;
+  margin-right: 0.25rem;
+  flex-shrink: 0;
+}
+
+.alert-icon {
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+  flex-shrink: 0;
+}
+
+.sidebar-logo svg {
+  width: 20px !important;
+  height: 20px !important;
+}
+
+.empty-icon-circle {
+  width: 56px !important;
+  height: 56px !important;
+}
+
+.empty-icon-circle svg {
+  width: 28px !important;
+  height: 28px !important;
+}
+
+.upload-icon {
+  width: 32px !important;
+  height: 32px !important;
+  color: var(--primary, #0284c7);
+  display: block;
+  margin: 0 auto 0.5rem auto;
+}
+
+.csv-upload-box svg {
+  width: 32px !important;
+  height: 32px !important;
+  display: block;
+  margin: 0 auto 0.5rem auto;
+}
+
 /* ============================
    LAYOUT: Sidebar + Main
    ============================ */

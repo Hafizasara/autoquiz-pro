@@ -1,9 +1,40 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, onMounted, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { useAuth } from '../store/auth';
 
+const route = useRoute();
 const auth = useAuth();
 const currentYear = new Date().getFullYear();
+
+const scrollToSection = (hash) => {
+  if (!hash) return;
+  const targetId = hash.startsWith('#') ? hash : `#${hash}`;
+  setTimeout(() => {
+    const el = document.querySelector(targetId);
+    if (el) {
+      const topOffset = 80;
+      const elementPosition = el.getBoundingClientRect().top;
+      const offsetPosition = elementPosition + window.pageYOffset - topOffset;
+      window.scrollTo({
+        top: offsetPosition,
+        behavior: 'smooth'
+      });
+    }
+  }, 100);
+};
+
+onMounted(() => {
+  if (route.hash) {
+    scrollToSection(route.hash);
+  }
+});
+
+watch(() => route.hash, (newHash) => {
+  if (newHash) {
+    scrollToSection(newHash);
+  }
+});
 
 const stats = [
   { value: '100%', label: 'Automated Grading & Analytics' },
@@ -361,10 +392,11 @@ const faqs = [
         <div class="footer-links">
           <div class="footer-col">
             <span class="col-head">Navigation</span>
-            <a href="#about">About</a>
-            <a href="#features">Features</a>
-            <a href="#roles">Portals</a>
-            <a href="#workflow">Workflow</a>
+            <a href="/#about" @click.prevent="scrollToSection('#about')">About</a>
+            <a href="/#features" @click.prevent="scrollToSection('#features')">Features</a>
+            <a href="/#roles" @click.prevent="scrollToSection('#roles')">Portals</a>
+            <a href="/#workflow" @click.prevent="scrollToSection('#workflow')">Workflow</a>
+            <a href="/#faq" @click.prevent="scrollToSection('#faq')">FAQ</a>
           </div>
           <div class="footer-col">
             <span class="col-head">Access</span>

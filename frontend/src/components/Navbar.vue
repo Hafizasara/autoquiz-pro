@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuth } from '../store/auth';
 
@@ -7,12 +7,48 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuth();
 
+const isMobileMenuOpen = ref(false);
+
 // Hide global navbar on views that already have their own self-contained top bar (like DashboardView)
 const isDashboard = computed(() => route.name === 'Dashboard');
 
 const handleSignOut = async () => {
   await auth.logout();
   router.push('/login');
+};
+
+const navigateToSection = (sectionId) => {
+  isMobileMenuOpen.value = false;
+  const hash = sectionId.startsWith('#') ? sectionId : `#${sectionId}`;
+
+  if (route.path === '/') {
+    const el = document.querySelector(hash);
+    if (el) {
+      const topOffset = 80;
+      const elementPosition = el.getBoundingClientRect().top;
+      const offsetPosition = elementPosition + window.pageYOffset - topOffset;
+      window.scrollTo({
+        top: offsetPosition,
+        behavior: 'smooth'
+      });
+      window.history.pushState(null, '', hash);
+    }
+  } else {
+    router.push({ path: '/', hash }).then(() => {
+      setTimeout(() => {
+        const el = document.querySelector(hash);
+        if (el) {
+          const topOffset = 80;
+          const elementPosition = el.getBoundingClientRect().top;
+          const offsetPosition = elementPosition + window.pageYOffset - topOffset;
+          window.scrollTo({
+            top: offsetPosition,
+            behavior: 'smooth'
+          });
+        }
+      }, 150);
+    });
+  }
 };
 </script>
 
@@ -33,11 +69,11 @@ const handleSignOut = async () => {
 
       <!-- Center Nav Links for Quick Section Navigation -->
       <div class="nav-center-links">
-        <a href="#about" class="nav-item">About</a>
-        <a href="#features" class="nav-item">Features</a>
-        <a href="#roles" class="nav-item">Portals</a>
-        <a href="#workflow" class="nav-item">How It Works</a>
-        <a href="#faq" class="nav-item">FAQ</a>
+        <a href="/#about" class="nav-item" @click.prevent="navigateToSection('#about')">About</a>
+        <a href="/#features" class="nav-item" @click.prevent="navigateToSection('#features')">Features</a>
+        <a href="/#roles" class="nav-item" @click.prevent="navigateToSection('#roles')">Portals</a>
+        <a href="/#workflow" class="nav-item" @click.prevent="navigateToSection('#workflow')">How It Works</a>
+        <a href="/#faq" class="nav-item" @click.prevent="navigateToSection('#faq')">FAQ</a>
       </div>
 
       <!-- Right Action Buttons -->
@@ -58,7 +94,30 @@ const handleSignOut = async () => {
             Get Started
           </router-link>
         </template>
+
+        <!-- Mobile hamburger toggle button -->
+        <button
+          class="mobile-menu-btn"
+          @click="isMobileMenuOpen = !isMobileMenuOpen"
+          aria-label="Toggle navigation menu"
+        >
+          <svg v-if="!isMobileMenuOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
       </div>
+    </div>
+
+    <!-- Mobile Navigation Drawer -->
+    <div v-if="isMobileMenuOpen" class="mobile-nav-drawer">
+      <a href="/#about" class="mobile-nav-item" @click.prevent="navigateToSection('#about')">About</a>
+      <a href="/#features" class="mobile-nav-item" @click.prevent="navigateToSection('#features')">Features</a>
+      <a href="/#roles" class="mobile-nav-item" @click.prevent="navigateToSection('#roles')">Portals</a>
+      <a href="/#workflow" class="mobile-nav-item" @click.prevent="navigateToSection('#workflow')">How It Works</a>
+      <a href="/#faq" class="mobile-nav-item" @click.prevent="navigateToSection('#faq')">FAQ</a>
     </div>
   </nav>
 </template>
@@ -168,6 +227,71 @@ const handleSignOut = async () => {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+.mobile-menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem;
+  color: var(--text-main);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.mobile-menu-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent-vivid);
+}
+
+.mobile-menu-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+@media (min-width: 820px) {
+  .mobile-menu-btn {
+    display: none;
+  }
+}
+
+.mobile-nav-drawer {
+  display: flex;
+  flex-direction: column;
+  padding: 0.75rem 1.5rem 1rem;
+  background: rgba(255, 255, 255, 0.98);
+  border-top: 1px solid var(--border-sky);
+  gap: 0.5rem;
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.mobile-nav-item {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-main);
+  text-decoration: none;
+  padding: 0.6rem 0.85rem;
+  border-radius: var(--radius-sm);
+  transition: var(--transition-fast);
+}
+
+.mobile-nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--accent-vivid);
 }
 
 @media (max-width: 480px) {

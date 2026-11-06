@@ -1702,15 +1702,17 @@ onMounted(async () => {
     <aside :class="['sidebar', sidebarCollapsed && 'sidebar-collapsed']">
       <!-- Sidebar Header / Brand -->
       <div class="sidebar-header">
-        <div class="sidebar-logo">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-          </svg>
-        </div>
-        <div v-if="!sidebarCollapsed" class="sidebar-brand-text">
-          <span class="sidebar-brand-name">AutoQuiz Pro</span>
-          <span class="sidebar-brand-sub">{{ auth.user.value?.universityName || 'Academic Hub' }}</span>
-        </div>
+        <router-link to="/" class="sidebar-brand-link" title="Visit Home & FAQ">
+          <div class="sidebar-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+          <div v-if="!sidebarCollapsed" class="sidebar-brand-text">
+            <span class="sidebar-brand-name">AutoQuiz Pro</span>
+            <span class="sidebar-brand-sub">{{ auth.user.value?.universityName || 'Academic Hub' }}</span>
+          </div>
+        </router-link>
         <button class="sidebar-collapse-btn" @click="sidebarCollapsed = !sidebarCollapsed" title="Toggle sidebar">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path v-if="!sidebarCollapsed" d="M15 18l-6-6 6-6"/>
@@ -1926,6 +1928,12 @@ onMounted(async () => {
           <p class="topbar-sub">{{ auth.user.value?.universityName || 'Institutional Academic Hub' }}</p>
         </div>
         <div class="topbar-right">
+          <router-link to="/#faq" class="btn btn-secondary btn-xs" title="View FAQs & Help">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-xs">
+              <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            FAQ &amp; Help
+          </router-link>
           <span class="topbar-user-name">{{ auth.user.value?.name }}</span>
           <span :class="['topbar-role-badge', auth.isAdmin.value ? 'role-admin' : (auth.isTeacher.value ? 'role-teacher' : 'role-student')]">
             <span class="badge-dot"></span>
@@ -5700,6 +5708,15 @@ svg {
   border-bottom: 1px solid var(--border-light);
   min-height: 64px;
   background: var(--bg-hover);
+}
+
+.sidebar-brand-link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  text-decoration: none;
+  flex: 1;
+  min-width: 0;
 }
 
 .sidebar-logo {

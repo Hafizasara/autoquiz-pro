@@ -1982,9 +1982,6 @@ onMounted(async () => {
                 <p class="section-desc">Curriculum modules assigned to you or created under your educator profile. Click any course to open its full Course Page.</p>
               </div>
               <div class="action-btn-group">
-                <button class="btn btn-primary btn-sm" @click="showTeacherNewCourseModal = true">
-                  + New Course
-                </button>
                 <button class="btn btn-secondary btn-sm" @click="loadTeacherData">
                   Refresh
                 </button>
@@ -2020,9 +2017,8 @@ onMounted(async () => {
               </div>
               <h3 class="empty-title">No Courses Assigned Yet</h3>
               <p class="empty-desc">
-                You haven't been assigned any courses yet. Use the <strong>+ New Course</strong> shortcut to register a course.
+                You haven't been assigned any courses yet. Contact your admin to get courses assigned.
               </p>
-              <button class="btn btn-primary" @click="showTeacherNewCourseModal = true">+ Create New Course</button>
             </div>
 
             <!-- Search No Results State -->
@@ -2904,61 +2900,6 @@ onMounted(async () => {
           </div>
         </div>
 
-        <!-- ============================================================= -->
-        <!-- MODAL 1: CREATE NEW COURSE (SHORTCUT)                         -->
-        <!-- ============================================================= -->
-        <div v-if="showTeacherNewCourseModal" class="modal-overlay" @click.self="showTeacherNewCourseModal = false">
-          <div class="modal-card">
-            <div class="modal-header">
-              <div class="modal-title-wrap">
-                <h3 class="modal-title">+ Create New Course Shortcut</h3>
-                <p class="modal-subtitle">Register a new curriculum course assigned directly to your faculty profile.</p>
-              </div>
-              <button class="modal-close-btn" @click="showTeacherNewCourseModal = false">&times;</button>
-            </div>
-            <form @submit.prevent="handleCreateTeacherCourse" class="modal-body">
-              <div class="form-grid">
-                <div class="field-item flex-2">
-                  <label class="field-label">Course Name *</label>
-                  <input
-                    type="text"
-                    v-model="teacherNewCourseForm.courseName"
-                    class="input-control"
-                    placeholder="e.g. Advanced Artificial Intelligence"
-                    required
-                  />
-                </div>
-                <div class="field-item flex-1">
-                  <label class="field-label">Course Code</label>
-                  <input
-                    type="text"
-                    v-model="teacherNewCourseForm.courseCode"
-                    class="input-control uppercase"
-                    placeholder="e.g. AI-401"
-                  />
-                </div>
-              </div>
-              <div class="form-grid mt-3">
-                <div class="field-item flex-1">
-                  <label class="field-label">Academic Department</label>
-                  <select v-model="teacherNewCourseForm.departmentId" class="select-control">
-                    <option value="">Select Department (Optional)...</option>
-                    <option v-for="d in teacherDepartments" :key="d.department_id" :value="String(d.department_id)">
-                      {{ d.name }} ({{ d.code }})
-                    </option>
-                  </select>
-                </div>
-              </div>
-              <div class="modal-footer mt-4">
-                <button type="submit" class="btn btn-primary" :disabled="isCreatingTeacherCourse">
-                  <span v-if="isCreatingTeacherCourse">Creating Course...</span>
-                  <span v-else>Register &amp; Assign to Me</span>
-                </button>
-                <button type="button" class="btn btn-secondary" @click="showTeacherNewCourseModal = false">Cancel</button>
-              </div>
-            </form>
-          </div>
-        </div>
 
         <!-- ============================================================= -->
         <!-- MODAL 2: REVIEW STUDENT ATTEMPT                               -->

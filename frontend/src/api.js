@@ -340,6 +340,14 @@ export const updateStudentStatus = async (token, studentId, isActive) => {
   });
 };
 
+export const updateStudentDepartment = async (token, studentId, departmentId) => {
+  return await request(`/admin/students/${studentId}/department`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ department_id: departmentId })
+  });
+};
+
 export const fixStudentEnrollment = async (token, studentId, data) => {
   return await request(`/admin/students/${studentId}/fix-enrollment`, {
     method: 'PUT',
@@ -424,6 +432,14 @@ export const deleteDepartment = async (token, id, permanent = false) => {
 export const fetchDepartmentMembers = async (token, id) => {
   return await request(`/admin/departments/${id}/members`, {
     headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const addStudentToDepartment = async (token, id, data) => {
+  return await request(`/admin/departments/${id}/students`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data)
   });
 };
 

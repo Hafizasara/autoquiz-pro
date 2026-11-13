@@ -625,52 +625,79 @@ router.get('/courses/:id/hub', async (req, res, next) => {
     course.department_name = department?.name || 'Academic Department';
     course.department_code = department?.code || 'DEPT';
 
-    // 3. Get Enrolled Students & check whether they have signed in
-    let students = [];
-    if (client) {
-      const { data: sList } = await client
-        .from('students')
-        .select('student_id, name, roll_number, email, created_at, course_id')
-        .eq('course_id', courseId)
-        .order('name', { ascending: true });
-      
-      const rawStudents = sList || [];
+    // 3. Get Enrolled Students (Course Enrolled + Department Students)
+    let rawStudents = [];
+    const deptId = course.department_id ? parseInt(course.department_id, 10) : 0;
 
-      // Check registered users to determine sign-in status
-      const { data: uList } = await client
-        .from('users')
-        .select('user_id, email, name, is_active, created_at')
-        .ilike('role', 'STUDENT');
-
-      const userMap = new Map();
-      (uList || []).forEach(u => {
-        if (u.email) userMap.set(u.email.toLowerCase().trim(), u);
-      });
-
-      students = rawStudents.map(s => {
-        const normalized = (s.email || '').toLowerCase().trim();
-        const matchedUser = userMap.get(normalized);
-        const isApproved = isApprovedStudentDomain(normalized);
-        
-        // Count student attempts
-        const attemptsCount = teacherReviewAttempts.filter(a => {
-          return (a.course_code === course.course_code || a.course_name === course.course_name) &&
-                 (a.roll_number === s.roll_number || (a.student_email && a.student_email.toLowerCase() === normalized));
-        }).length;
-
-        return {
-          student_id: s.student_id,
-          name: s.name,
-          roll_number: s.roll_number,
-          email: normalized,
-          created_at: s.created_at,
-          has_signed_in: Boolean(matchedUser),
-          last_sign_in: matchedUser ? (matchedUser.created_at || 'Recently active') : null,
-          is_approved_domain: isApproved,
-          attempt_count: attemptsCount
-        };
-      });
+    try {
+      const dbStudentsRes = await query(
+        `SELECT DISTINCT
+           COALESCE(s.student_id, u.user_id) as student_id,
+           COALESCE(s.name, u.name, 'Student') as name,
+           COALESCE(s.roll_number, UPPER(SPLIT_PART(COALESCE(s.email, u.email), '@', 1))) as roll_number,
+           LOWER(COALESCE(s.email, u.email)) as email,
+           COALESCE(s.created_at, u.created_at) as created_at,
+           CASE WHEN s.student_id IS NOT NULL THEN true ELSE false END as is_directly_enrolled,
+           CASE WHEN u.department_id = $2 THEN true ELSE false END as is_dept_student,
+           u.user_id as registered_user_id,
+           u.last_sign_in,
+           u.created_at as user_created_at
+         FROM public.students s
+         FULL OUTER JOIN public.users u 
+           ON LOWER(s.email) = LOWER(u.email) AND u.role = 'STUDENT'
+         WHERE s.course_id = $1 
+            OR ($2 > 0 AND u.department_id = $2 AND u.role = 'STUDENT')
+         ORDER BY name ASC`,
+        [courseId, deptId]
+      );
+      rawStudents = dbStudentsRes.rows || [];
+    } catch (dbErr) {
+      console.warn('Error fetching course & department students with pg:', dbErr.message);
     }
+
+    if (rawStudents.length === 0 && client) {
+      try {
+        const { data: sList } = await client
+          .from('students')
+          .select('student_id, name, roll_number, email, created_at, course_id')
+          .eq('course_id', courseId)
+          .order('name', { ascending: true });
+        rawStudents = (sList || []).map(s => ({
+          ...s,
+          is_directly_enrolled: true,
+          is_dept_student: false
+        }));
+      } catch (cErr) {
+        console.warn('Error fetching students via client:', cErr.message);
+      }
+    }
+
+    const students = rawStudents.map(s => {
+      const normalized = (s.email || '').toLowerCase().trim();
+      const isApproved = isApprovedStudentDomain(normalized);
+      const hasSignedIn = Boolean(s.registered_user_id || s.last_sign_in);
+
+      // Count student attempts
+      const attemptsCount = teacherReviewAttempts.filter(a => {
+        return (a.course_code === course.course_code || a.course_name === course.course_name) &&
+          (a.roll_number === s.roll_number || (a.student_email && a.student_email.toLowerCase() === normalized));
+      }).length;
+
+      return {
+        student_id: s.student_id,
+        name: s.name,
+        roll_number: s.roll_number || normalized.split('@')[0].toUpperCase(),
+        email: normalized,
+        created_at: s.created_at,
+        has_signed_in: hasSignedIn,
+        last_sign_in: s.last_sign_in || (hasSignedIn ? 'Active' : null),
+        is_approved_domain: isApproved,
+        attempt_count: attemptsCount,
+        is_directly_enrolled: s.is_directly_enrolled !== false,
+        is_dept_student: Boolean(s.is_dept_student),
+        enrollment_source: s.is_dept_student && !s.is_directly_enrolled ? 'Department Roster' : 'Course Enrolled'
+      };
+    });
 
     // 4. Get Materials for Course
     let materials = [];
@@ -803,7 +830,19 @@ router.post('/courses/:id/students', async (req, res, next) => {
 
     // 4. Insert Student
     let createdStudent = null;
-    if (client) {
+    try {
+      const dbInsert = await query(
+        `INSERT INTO public.students (course_id, university_id, name, roll_number, email)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [courseId, uniId, cleanName, cleanRoll, normalizedEmail]
+      );
+      createdStudent = dbInsert.rows[0];
+    } catch (dbErr) {
+      console.warn('PG direct insert into students:', dbErr.message);
+    }
+
+    if (!createdStudent && client) {
       const { data: inserted, error: insErr } = await client
         .from('students')
         .insert({

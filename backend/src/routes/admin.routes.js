@@ -635,6 +635,48 @@ router.put('/students/:id/status', async (req, res, next) => {
 });
 
 /**
+ * @route PUT /api/v1/admin/students/:id/department
+ * @desc Assign or change a student's department
+ */
+router.put('/students/:id/department', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { department_id } = req.body;
+    const uniId = req.user.university_id || 1;
+    const deptIdVal = department_id ? parseInt(department_id, 10) : null;
+
+    const result = await query(
+      `UPDATE public.users SET department_id = $1, updated_at = NOW()
+       WHERE user_id = $2 AND (university_id = $3 OR university_id IS NULL) AND role = 'STUDENT'
+       RETURNING user_id, name, email, department_id`,
+      [deptIdVal, id, uniId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ status: 'fail', message: 'Student not found.' });
+    }
+
+    let deptName = 'General / Unassigned';
+    if (deptIdVal) {
+      const dRes = await query(`SELECT name, code FROM public.departments WHERE department_id = $1`, [deptIdVal]);
+      if (dRes.rows.length > 0) {
+        deptName = `${dRes.rows[0].name} (${dRes.rows[0].code})`;
+      }
+    }
+
+    await logAudit(req, 'ASSIGN_STUDENT_DEPARTMENT', 'USER', id, { department_id: deptIdVal, department_name: deptName });
+
+    res.status(200).json({
+      status: 'success',
+      message: `Assigned ${result.rows[0].name} to department: ${deptName}`,
+      data: { student: result.rows[0] }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * @route PUT /api/v1/admin/students/:id/fix-enrollment
  * @desc Fix enrollment: update email, reassign course, or add student to a missing course
  */
@@ -1101,6 +1143,72 @@ router.get('/departments/:id/members', async (req, res, next) => {
   }
 });
 
+/**
+ * @route POST /api/v1/admin/departments/:id/students
+ * @desc Add or assign a student directly to a department
+ */
+router.post('/departments/:id/students', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { email, name, roll_number } = req.body;
+    const uniId = req.user.university_id || 1;
+    const deptId = parseInt(id, 10);
+
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ status: 'fail', message: 'Valid student email is required.' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const studentName = name?.trim() || normalizedEmail.split('@')[0];
+
+    // Check if department exists
+    const deptCheck = await query(`SELECT name, code FROM public.departments WHERE department_id = $1`, [deptId]);
+    if (deptCheck.rows.length === 0) {
+      return res.status(404).json({ status: 'fail', message: 'Department not found.' });
+    }
+
+    // Check if user already exists
+    const userRes = await query(
+      `SELECT user_id, name, email, department_id FROM public.users WHERE LOWER(email) = $1`,
+      [normalizedEmail]
+    );
+
+    let studentUser = null;
+    if (userRes.rows.length > 0) {
+      const updateRes = await query(
+        `UPDATE public.users 
+         SET department_id = $1, updated_at = NOW()
+         WHERE user_id = $2
+         RETURNING user_id, name, email, department_id, is_active, created_at`,
+        [deptId, userRes.rows[0].user_id]
+      );
+      studentUser = updateRes.rows[0];
+    } else {
+      const insertUser = await query(
+        `INSERT INTO public.users (email, name, role, department_id, university_id, email_verified, is_active)
+         VALUES ($1, $2, 'STUDENT', $3, $4, true, true)
+         RETURNING user_id, name, email, department_id, is_active, created_at`,
+        [normalizedEmail, studentName, deptId, uniId]
+      );
+      studentUser = insertUser.rows[0];
+    }
+
+    await logAudit(req, 'ADD_STUDENT_TO_DEPT', 'DEPARTMENT', deptId, {
+      email: normalizedEmail,
+      name: studentName,
+      department_name: deptCheck.rows[0].name
+    });
+
+    res.status(201).json({
+      status: 'success',
+      message: `Student "${studentName}" (${normalizedEmail}) assigned to ${deptCheck.rows[0].name}.`,
+      data: { student: studentUser }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // 5. COURSE MANAGEMENT (Enhanced)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1413,12 +1521,13 @@ router.put('/courses/:id', async (req, res, next) => {
 
 /**
  * @route POST /api/v1/admin/courses/:id/enroll
+ * @alias POST /api/v1/admin/courses/:id/students
  * @desc Enroll student by email into this course
  */
-router.post('/courses/:id/enroll', async (req, res, next) => {
+const handleAdminCourseEnroll = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { email, name } = req.body;
+    const { email, name, roll_number, rollNumber } = req.body;
     const uniId = req.user.university_id || 1;
 
     if (!email || !email.includes('@')) {
@@ -1449,24 +1558,29 @@ router.post('/courses/:id/enroll', async (req, res, next) => {
       studentName = uRes.rows[0]?.name || normalizedEmail.split('@')[0];
     }
 
+    const cleanRoll = (roll_number || rollNumber || normalizedEmail.split('@')[0]).trim().toUpperCase();
+
     const insertRes = await query(
-      `INSERT INTO public.students (email, name, course_id, university_id)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO public.students (email, name, roll_number, course_id, university_id)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [normalizedEmail, studentName, id, uniId]
+      [normalizedEmail, studentName, cleanRoll, id, uniId]
     );
 
-    await logAudit(req, 'ENROLL_STUDENT', 'COURSE', id, { email: normalizedEmail, name: studentName });
+    await logAudit(req, 'ENROLL_STUDENT', 'COURSE', id, { email: normalizedEmail, name: studentName, roll_number: cleanRoll });
 
     res.status(201).json({
       status: 'success',
-      message: `Enrolled ${studentName} (${normalizedEmail}) into course.`,
+      message: `Enrolled ${studentName} (${cleanRoll}) into course.`,
       data: { enrollment: insertRes.rows[0] }
     });
   } catch (error) {
     next(error);
   }
-});
+};
+
+router.post('/courses/:id/enroll', handleAdminCourseEnroll);
+router.post('/courses/:id/students', handleAdminCourseEnroll);
 
 /**
  * @route DELETE /api/v1/admin/courses/:id/students/:studentId

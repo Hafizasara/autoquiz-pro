@@ -36,8 +36,10 @@ import {
   updateDepartment,
   deleteDepartment,
   fetchDepartmentMembers,
+  addStudentToDepartment,
   fetchAdminStudents,
   updateStudentStatus,
+  updateStudentDepartment,
   fixStudentEnrollment,
   fetchStudentDetail,
   bulkLoadStudents,
@@ -983,6 +985,53 @@ const handleAssignDeptToCourse = async (courseId) => {
     await loadCoursesList();
   } catch (err) {
     showError(err.message || 'Failed to update course department.');
+  }
+};
+
+const selectedStudentDept = ref({});
+const assigningStudentDeptId = ref(null);
+const showAddDeptStudentForm = ref(false);
+const deptStudentForm = ref({ email: '', name: '', roll_number: '' });
+const isAddingDeptStudent = ref(false);
+
+const handleAssignDeptToStudent = async (studentId) => {
+  const deptId = selectedStudentDept.value[studentId];
+  assigningStudentDeptId.value = studentId;
+  try {
+    const res = await updateStudentDepartment(auth.token.value, studentId, deptId || null);
+    showSuccess(res.message || 'Student department updated.');
+    await loadStudents();
+  } catch (err) {
+    showError(err.message || 'Failed to update student department.');
+  } finally {
+    assigningStudentDeptId.value = null;
+  }
+};
+
+const handleAddStudentToDept = async () => {
+  if (!deptStudentForm.value.email || !deptStudentForm.value.email.includes('@')) {
+    showError('Please enter a valid student email address.');
+    return;
+  }
+  const deptId = selectedDeptMembers.value?.department?.department_id;
+  if (!deptId) return;
+
+  isAddingDeptStudent.value = true;
+  try {
+    const res = await addStudentToDepartment(auth.token.value, deptId, {
+      email: deptStudentForm.value.email.trim(),
+      name: deptStudentForm.value.name.trim() || undefined,
+      roll_number: deptStudentForm.value.roll_number.trim() || undefined
+    });
+    showSuccess(res.message || 'Student assigned to department successfully!');
+    deptStudentForm.value = { email: '', name: '', roll_number: '' };
+    showAddDeptStudentForm.value = false;
+    await openDeptMembersModal(selectedDeptMembers.value.department);
+    await loadStudents();
+  } catch (err) {
+    showError(err.message || 'Failed to add student to department.');
+  } finally {
+    isAddingDeptStudent.value = false;
   }
 };
 
@@ -2281,6 +2330,7 @@ onMounted(async () => {
                       <th>Student Name</th>
                       <th>Roll Number</th>
                       <th>University Email</th>
+                      <th>Enrollment Scope</th>
                       <th>Domain Validation</th>
                       <th>Account Sign-In Status</th>
                       <th>Attempts</th>
@@ -2297,6 +2347,14 @@ onMounted(async () => {
                       </td>
                       <td>
                         <span class="code-mono text-sm">{{ s.email }}</span>
+                      </td>
+                      <td>
+                        <span v-if="s.is_dept_student && !s.is_directly_enrolled" class="badge badge-purple text-xs" title="Enrolled through department roster">
+                          Dept: {{ selectedCourseHub.department_code || selectedCourseHub.department_name }}
+                        </span>
+                        <span v-else class="badge badge-info text-xs" title="Directly enrolled in this course">
+                          Course Enrolled
+                        </span>
                       </td>
                       <td>
                         <span v-if="s.is_approved_domain" class="badge badge-success text-xs">
@@ -4414,9 +4472,25 @@ onMounted(async () => {
                       </div>
                     </td>
                     <td>
-                      <span v-if="student.department_name" class="dept-pill">{{ student.department_code || student.department_name }}</span>
-                      <span v-else-if="student.courses?.length > 0 && student.courses[0].department_name" class="dept-pill">{{ student.courses[0].department_name }}</span>
-                      <span v-else class="text-dim text-xs">General / Unassigned</span>
+                      <div class="dept-select-wrap">
+                        <span v-if="student.department_name" class="dept-pill">{{ student.department_code || student.department_name }}</span>
+                        <span v-else-if="student.courses?.length > 0 && student.courses[0].department_name" class="dept-pill">{{ student.courses[0].department_name }}</span>
+                        <span v-else class="text-dim text-xs">General / Unassigned</span>
+                        <select
+                          v-model="selectedStudentDept[student.user_id]"
+                          @change="handleAssignDeptToStudent(student.user_id)"
+                          :disabled="assigningStudentDeptId === student.user_id"
+                          class="select-control-mini"
+                          title="Assign or change department"
+                        >
+                          <option :value="undefined">Change Dept...</option>
+                          <option :value="null">-- Unassigned / None --</option>
+                          <option v-for="d in departmentsList" :key="d.department_id" :value="d.department_id">
+                            {{ d.code }} - {{ d.name }}
+                          </option>
+                        </select>
+                        <span v-if="assigningStudentDeptId === student.user_id" class="spinner-sm"></span>
+                      </div>
                     </td>
                     <td>
                       <div v-if="student.courses?.length > 0" class="student-courses-wrap">
@@ -5228,6 +5302,56 @@ onMounted(async () => {
 
               <!-- Tab: Students -->
               <div v-else-if="deptModalTab === 'students'">
+                <!-- Quick Add Student to Department Bar -->
+                <div class="glass-card p-3 mb-3">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span class="text-sm font-semibold">Department Students ({{ selectedDeptMembers?.students?.length || 0 }})</span>
+                    <button class="btn btn-primary btn-xs" @click="showAddDeptStudentForm = !showAddDeptStudentForm">
+                      {{ showAddDeptStudentForm ? 'Close Form' : '+ Add Student to Dept' }}
+                    </button>
+                  </div>
+
+                  <form v-if="showAddDeptStudentForm" @submit.prevent="handleAddStudentToDept" class="mt-3 pt-3 border-t">
+                    <div class="form-grid">
+                      <div class="field-item flex-2">
+                        <label class="field-label">Student Email *</label>
+                        <input
+                          type="email"
+                          v-model="deptStudentForm.email"
+                          placeholder="student@university.edu"
+                          class="input-control input-sm"
+                          required
+                        />
+                      </div>
+                      <div class="field-item flex-2">
+                        <label class="field-label">Student Name</label>
+                        <input
+                          type="text"
+                          v-model="deptStudentForm.name"
+                          placeholder="e.g. John Doe"
+                          class="input-control input-sm"
+                        />
+                      </div>
+                      <div class="field-item flex-1">
+                        <label class="field-label">Roll Number</label>
+                        <input
+                          type="text"
+                          v-model="deptStudentForm.roll_number"
+                          placeholder="e.g. 24-CS-001"
+                          class="input-control input-sm"
+                        />
+                      </div>
+                    </div>
+                    <div class="form-action-row mt-2">
+                      <button type="submit" class="btn btn-primary btn-xs" :disabled="isAddingDeptStudent || !deptStudentForm.email">
+                        <span v-if="isAddingDeptStudent">Adding...</span>
+                        <span v-else>Assign to Department</span>
+                      </button>
+                      <button type="button" class="btn btn-secondary btn-xs" @click="showAddDeptStudentForm = false">Cancel</button>
+                    </div>
+                  </form>
+                </div>
+
                 <div v-if="!selectedDeptMembers?.students || selectedDeptMembers.students.length === 0" class="empty-table-state">
                   <p>No students registered or enrolled in this department yet.</p>
                 </div>

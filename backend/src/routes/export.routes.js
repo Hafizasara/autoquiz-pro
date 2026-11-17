@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import PDFDocument from 'pdfkit';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import { supabaseAdmin, supabase } from '../config/supabase.js';
 import { requireAuth } from '../middleware/auth.middleware.js';
 
@@ -689,7 +689,7 @@ router.post('/:assessmentId/google-doc', requireAuth, async (req, res) => {
 // ---------------------------------------------------------------------------
 function createZipArchive(files = []) {
   return new Promise((resolve, reject) => {
-    const archive = archiver('zip', { zlib: { level: 9 } });
+    const archive = new ZipArchive({ zlib: { level: 9 } });
     const chunks = [];
 
     archive.on('data', chunk => chunks.push(chunk));

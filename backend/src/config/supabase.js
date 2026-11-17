@@ -14,24 +14,33 @@ const databaseUrl = process.env.DATABASE_URL;
 export const isSupabaseConfigured = Boolean(supabaseUrl && (supabaseAnonKey || supabaseServiceRoleKey));
 export const isDatabaseUrlConfigured = Boolean(databaseUrl);
 
+// Custom fetch with a 4-second timeout so Supabase calls fail fast when the project is unreachable
+const SUPABASE_FETCH_TIMEOUT_MS = 4000;
+const fetchWithTimeout = (url, options = {}) => {
+  const controller = new AbortController();
+  if (options.signal) {
+    options.signal.addEventListener('abort', () => controller.abort());
+  }
+  const timeout = setTimeout(() => controller.abort(), SUPABASE_FETCH_TIMEOUT_MS);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeout));
+};
+
+const supabaseClientOptions = {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false
+  },
+  global: { fetch: fetchWithTimeout }
+};
+
 // Supabase JS Client for Auth & Storage (runs over HTTPS 443)
 export const supabase = isSupabaseConfigured
-  ? createClient(supabaseUrl, supabaseAnonKey || supabaseServiceRoleKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false
-      }
-    })
+  ? createClient(supabaseUrl, supabaseAnonKey || supabaseServiceRoleKey, supabaseClientOptions)
   : null;
 
 // Admin client for backend operations requiring elevated privileges
 export const supabaseAdmin = (isSupabaseConfigured && supabaseServiceRoleKey)
-  ? createClient(supabaseUrl, supabaseServiceRoleKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      }
-    })
+  ? createClient(supabaseUrl, supabaseServiceRoleKey, supabaseClientOptions)
   : supabase;
 
 // PostgreSQL Connection Pool using direct pooler connection string (short timeout to fail fast if blocked)
@@ -455,6 +464,109 @@ export const runViaHttps = async (text, params = []) => {
     const { data, error } = await client.from('assessments').select('*');
     if (error) throw error;
     return { rows: data || [], rowCount: (data || []).length };
+  }
+
+  // 13B. Insert Assessment
+  if (/INSERT\s+INTO\s+public\.assessments/i.test(clean)) {
+    const title = params[0];
+    const description = params[1];
+    const courseId = params[2];
+    const userId = params[3];
+    const totalMarks = params[4];
+    const passingMarks = params[5];
+    const durationMinutes = params[6];
+    const status = params[7] || 'DRAFT';
+    let questions = [];
+    try {
+      questions = typeof params[8] === 'string' ? JSON.parse(params[8] || '[]') : (params[8] || []);
+    } catch (e) {
+      questions = [];
+    }
+
+    const { data, error } = await client
+      .from('assessments')
+      .insert({
+        title,
+        description,
+        course_id: courseId,
+        user_id: userId,
+        created_by: userId,
+        total_marks: totalMarks,
+        passing_marks: passingMarks,
+        duration_minutes: durationMinutes,
+        status,
+        questions
+      })
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return { rows: [data], rowCount: 1 };
+  }
+
+  // 14. Update Assessments (Title, Status, Description, etc.)
+  if (/UPDATE\s+public\.assessments\s+SET/i.test(clean)) {
+    // If title and updated_at
+    if (clean.includes('title = $1') && clean.includes('assessment_id = $2')) {
+      const { data, error } = await client
+        .from('assessments')
+        .update({ title: params[0], updated_at: new Date().toISOString() })
+        .eq('assessment_id', params[1])
+        .select('*');
+      if (error) throw error;
+      return { rows: data || [], rowCount: (data || []).length };
+    }
+    // If status
+    if (clean.includes('status = $1') && clean.includes('assessment_id = $2')) {
+      const { data, error } = await client
+        .from('assessments')
+        .update({ status: params[0], updated_at: new Date().toISOString() })
+        .eq('assessment_id', params[1])
+        .select('*');
+      if (error) throw error;
+      return { rows: data || [], rowCount: (data || []).length };
+    }
+    // Generic update
+    const idParam = params[params.length - 1];
+    const { data, error } = await client
+      .from('assessments')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('assessment_id', idParam)
+      .select('*');
+    if (error) throw error;
+    return { rows: data || [], rowCount: (data || []).length };
+  }
+
+  // 15. Delete Assessment
+  if (/DELETE\s+FROM\s+public\.assessments\s+WHERE\s+assessment_id\s*=\s*\$1/i.test(clean)) {
+    const { error } = await client
+      .from('assessments')
+      .delete()
+      .eq('assessment_id', params[0]);
+    if (error) throw error;
+    return { rows: [], rowCount: 1 };
+  }
+
+  // 16. Attempts count for assessment
+  if (/FROM\s+public\.attempts.*WHERE.*assessment_id\s*=\s*\$1/i.test(clean)) {
+    const { count, error } = await client
+      .from('attempts')
+      .select('*', { count: 'exact', head: true })
+      .eq('assessment_id', params[0]);
+    if (error) {
+      return { rows: [{ count: 0 }], rowCount: 1 };
+    }
+    return { rows: [{ count: count || 0 }], rowCount: 1 };
+  }
+
+  // 17. Delete questions or attempts for assessment
+  if (/DELETE\s+FROM\s+public\.questions\s+WHERE\s+assessment_id\s*=\s*\$1/i.test(clean)) {
+    await client.from('questions').delete().eq('assessment_id', params[0]);
+    return { rows: [], rowCount: 1 };
+  }
+  if (/DELETE\s+FROM\s+public\.attempts\s+WHERE\s+assessment_id\s*=\s*\$1/i.test(clean)) {
+    await client.from('attempts').delete().eq('assessment_id', params[0]);
+    return { rows: [], rowCount: 1 };
   }
 
   console.warn('⚠️ [HTTPS Fallback] Unhandled query pattern:', clean);

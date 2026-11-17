@@ -11,128 +11,11 @@ router.use(requireAuth);
 router.use(requireRole('TEACHER', 'ADMIN'));
 
 // In-memory persistent caches for live interactive attempts, exports, and AI failure logs
-let teacherReviewAttempts = [
-  {
-    attempt_id: 101,
-    student_name: 'Muhammad Usman',
-    roll_number: '24-ST-074',
-    student_email: '24-st-074@students.ptut.edu.pk',
-    course_name: 'Information Security',
-    course_code: 'ST-101',
-    assessment_id: 8,
-    assessment_title: 'Information Security & Cryptography Quiz 1',
-    submitted_at: new Date(Date.now() - 3600000 * 2).toISOString(),
-    score: 80,
-    total_marks: 100,
-    is_flagged: true,
-    flag_count: 3,
-    flag_reasons: [
-      '3 window blur / tab switch events detected during exam session',
-      'Exited full-screen browser lockdown at minute 24:12'
-    ],
-    status: 'WAITING_REVIEW',
-    student_response: 'Explained asymmetric RSA encryption and public/private key pairs. Defined MITM attacks with ARP spoofing example.',
-    teacher_notes: 'Requires verification of browser focus loss events before grade release.'
-  },
-  {
-    attempt_id: 102,
-    student_name: 'Sara Bhatti',
-    roll_number: '24-ST-043',
-    student_email: '24-st-043@students.ptut.edu.pk',
-    course_name: 'Information Security',
-    course_code: 'ST-101',
-    assessment_id: 8,
-    assessment_title: 'Information Security & Cryptography Quiz 1',
-    submitted_at: new Date(Date.now() - 3600000 * 5).toISOString(),
-    score: 92,
-    total_marks: 100,
-    is_flagged: true,
-    flag_count: 1,
-    flag_reasons: [
-      'Unusual clipboard paste event detected in subjective response block'
-    ],
-    status: 'WAITING_REVIEW',
-    student_response: 'Detailed comprehensive comparison of AES-256 and DES encryption standard with block cipher breakdown.',
-    teacher_notes: 'Check for potential plagiarism or external text copy.'
-  },
-  {
-    attempt_id: 103,
-    student_name: 'Ali Raza',
-    roll_number: '24-ST-012',
-    student_email: 'student@ptut.edu.pk',
-    course_name: 'Information Security',
-    course_code: 'ST-101',
-    assessment_id: 8,
-    assessment_title: 'Information Security & Cryptography Quiz 1',
-    submitted_at: new Date(Date.now() - 3600000 * 18).toISOString(),
-    score: 75,
-    total_marks: 100,
-    is_flagged: false,
-    flag_count: 0,
-    flag_reasons: [],
-    status: 'WAITING_REVIEW',
-    student_response: 'Answered all objective MCQs and provided concise definition of digital certificates and SSL handshake.',
-    teacher_notes: 'Subjective question 2 awaiting teacher rubric confirmation.'
-  }
-];
+let teacherReviewAttempts = [];
 
-let teacherExportsList = [
-  {
-    export_id: 'EXP-901',
-    title: 'Information Security & Cryptography Quiz 1 - Printable Exam Paper',
-    format: 'PDF',
-    created_at: new Date(Date.now() - 3600000 * 4).toISOString(),
-    file_size: '184 KB',
-    status: 'READY',
-    download_url: '/exports/exam-paper-st101.pdf',
-    assessment_title: 'Information Security & Cryptography Quiz 1'
-  },
-  {
-    export_id: 'EXP-902',
-    title: 'CS301 Data Structures Midterm - Gradebook & Marks Roster',
-    format: 'CSV',
-    created_at: new Date(Date.now() - 3600000 * 24).toISOString(),
-    file_size: '32 KB',
-    status: 'COMPLETED',
-    download_url: '/exports/gradebook-cs301.csv',
-    assessment_title: 'CS301 Midterm Roster'
-  },
-  {
-    export_id: 'EXP-903',
-    title: 'Faculty Assessment Synthesis - MS Word Package',
-    format: 'DOCX',
-    created_at: new Date(Date.now() - 3600000 * 48).toISOString(),
-    file_size: '245 KB',
-    status: 'COMPLETED',
-    download_url: '/exports/assessment-pkg.docx',
-    assessment_title: 'Institutional Exam Package'
-  }
-];
+let teacherExportsList = [];
 
-let teacherAiFailuresList = [
-  {
-    failure_id: 'AIF-401',
-    feature: 'AI Question Generation',
-    model: 'Gemini 1.5 Flash',
-    prompt_topic: 'Advanced Graph Algorithms & Dijkstra Complexity',
-    error_message: 'Gemini rate-limit threshold reached: 429 Resource exhausted. Suggested action: Retry generation.',
-    created_at: new Date(Date.now() - 3600000 * 3).toISOString(),
-    status: 'NEEDS_RETRY',
-    target_course: 'CS-301 Data Structures',
-    can_retry: true
-  },
-  {
-    failure_id: 'AIF-402',
-    feature: 'Subjective Answer Auto-Grading',
-    model: 'Gemini 1.5 Flash',
-    prompt_topic: 'Student Cryptography Essay (Roll: 24-ST-074)',
-    error_message: 'JSON response parse warning: Model output contained trailing markdown comments. Manual teacher review recommended.',
-    created_at: new Date(Date.now() - 3600000 * 12).toISOString(),
-    status: 'FLAGGED_FOR_HUMAN',
-    target_course: 'ST-101 Information Security',
-    can_retry: true
-  }
-];
+let teacherAiFailuresList = [];
 
 /**
  * @route GET /api/v1/teacher/overview
@@ -170,27 +53,32 @@ router.get('/overview', async (req, res, next) => {
       console.warn('Error loading teacher courses:', cErr.message);
     }
 
-    // 2. Fetch Assessments (Drafts and Published)
+    // 2. Fetch Assessments (Drafts, Saved, Published, Closed, Archived)
     let drafts = [];
     let published = [];
+    let saved = [];
+    let closed = [];
+    let archived = [];
+    let allAssessments = [];
     try {
       if (client) {
         const { data: asmts } = await client
           .from('assessments')
-          .select('*')
+          .select('*, courses(course_name, course_code)')
           .order('created_at', { ascending: false });
 
-        const allAssessments = asmts || [];
+        allAssessments = (asmts || []).map(a => ({
+          ...a,
+          course_name: a.courses?.course_name || a.course_name,
+          course_code: a.courses?.course_code || a.course_code || 'CRS',
+          status: (a.status || 'DRAFT').toUpperCase()
+        }));
 
-        drafts = allAssessments.filter(a => {
-          const s = (a.status || '').toUpperCase();
-          return s === 'DRAFT';
-        });
-
-        published = allAssessments.filter(a => {
-          const s = (a.status || '').toUpperCase();
-          return s === 'PUBLISHED' || s === 'ACTIVE';
-        });
+        drafts = allAssessments.filter(a => a.status === 'DRAFT');
+        saved = allAssessments.filter(a => a.status === 'SAVED');
+        published = allAssessments.filter(a => a.status === 'PUBLISHED' || a.status === 'ACTIVE');
+        closed = allAssessments.filter(a => a.status === 'CLOSED');
+        archived = allAssessments.filter(a => a.status === 'ARCHIVED');
       }
     } catch (aErr) {
       console.warn('Error loading assessments:', aErr.message);
@@ -223,7 +111,11 @@ router.get('/overview', async (req, res, next) => {
       data: {
         courses,
         drafts,
+        saved,
         published,
+        closed,
+        archived,
+        allAssessments,
         reviewQueue: waitingReviewAttempts,
         flaggedCount,
         waitingReviewCount: waitingReviewAttempts.length,
@@ -232,8 +124,12 @@ router.get('/overview', async (req, res, next) => {
         departments,
         stats: {
           coursesCount: courses.length,
+          totalAssessmentsCount: allAssessments.length,
           draftsCount: drafts.length,
+          savedCount: saved.length,
           publishedCount: published.length,
+          closedCount: closed.length,
+          archivedCount: archived.length,
           waitingReviewCount: waitingReviewAttempts.length,
           flaggedCount,
           recentExportsCount: teacherExportsList.length,
@@ -298,17 +194,52 @@ router.post('/courses', async (req, res, next) => {
 
 /**
  * @route POST /api/v1/teacher/assessments/:id/publish
- * @desc Toggle draft assessment to PUBLISHED
+ * @desc Publish a saved/draft assessment to a course with optional attempt limit and schedule window
  */
 router.post('/assessments/:id/publish', async (req, res, next) => {
   try {
     const { id } = req.params;
+    const {
+      courseId,
+      course_id,
+      attemptLimit,
+      attempt_limit,
+      scheduleOpenAt,
+      schedule_open_at,
+      scheduleCloseAt,
+      schedule_close_at
+    } = req.body || {};
     const client = supabaseAdmin || supabase;
+
+    const updates = {
+      status: 'PUBLISHED',
+      updated_at: new Date().toISOString()
+    };
+
+    const resolvedCourse = courseId || course_id;
+    if (resolvedCourse) {
+      updates.course_id = parseInt(resolvedCourse, 10);
+    }
+
+    const resolvedAttemptLimit = attemptLimit !== undefined ? parseInt(attemptLimit, 10) : (attempt_limit !== undefined ? parseInt(attempt_limit, 10) : undefined);
+    if (resolvedAttemptLimit !== undefined && !isNaN(resolvedAttemptLimit)) {
+      updates.attempt_limit = Math.max(1, resolvedAttemptLimit);
+    }
+
+    const openAt = scheduleOpenAt || schedule_open_at;
+    if (openAt !== undefined) {
+      updates.schedule_open_at = openAt || null;
+    }
+
+    const closeAt = scheduleCloseAt || schedule_close_at;
+    if (closeAt !== undefined) {
+      updates.schedule_close_at = closeAt || null;
+    }
 
     if (client) {
       const { data, error } = await client
         .from('assessments')
-        .update({ status: 'PUBLISHED', updated_at: new Date().toISOString() })
+        .update(updates)
         .eq('assessment_id', id)
         .select('*')
         .single();
@@ -319,7 +250,7 @@ router.post('/assessments/:id/publish', async (req, res, next) => {
 
       return res.status(200).json({
         status: 'success',
-        message: 'Assessment published successfully! Students can now participate.',
+        message: 'Assessment published successfully! Students can now access and participate based on scheduled timings and attempt limits.',
         data: { assessment: data }
       });
     }
@@ -365,28 +296,254 @@ router.post('/assessments/:id/revert-draft', async (req, res, next) => {
 });
 
 /**
- * @route DELETE /api/v1/teacher/assessments/:id
- * @desc Discard draft assessment
+ * @route GET /api/v1/teacher/assessments/:id/attempts-check
+ * @desc Check if student attempts exist for this assessment
  */
-router.delete('/assessments/:id', async (req, res, next) => {
+router.get('/assessments/:id/attempts-check', async (req, res, next) => {
   try {
     const { id } = req.params;
     const client = supabaseAdmin || supabase;
+    let attemptsCount = 0;
 
+    // 1. Check in-memory attempts queue
+    const memCount = teacherReviewAttempts.filter(a => String(a.assessment_id) === String(id)).length;
+    attemptsCount += memCount;
+
+    // 2. Check Supabase attempts table
     if (client) {
-      const { error } = await client
-        .from('assessments')
-        .delete()
-        .eq('assessment_id', id);
-
-      if (error) {
-        return res.status(400).json({ status: 'fail', message: error.message });
+      try {
+        const { count, error } = await client
+          .from('attempts')
+          .select('*', { count: 'exact', head: true })
+          .eq('assessment_id', id);
+        if (!error && count !== null && count !== undefined) {
+          attemptsCount += count;
+        }
+      } catch (err) {
+        console.warn('Teacher attempts check note:', err.message);
       }
     }
 
     res.status(200).json({
       status: 'success',
-      message: 'Draft assessment deleted.'
+      data: {
+        assessmentId: parseInt(id, 10),
+        hasAttempts: attemptsCount > 0,
+        attemptsCount
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route PATCH /api/v1/teacher/assessments/:id
+ * @desc Rename title later, update status (DRAFT, SAVED, PUBLISHED, CLOSED, ARCHIVED), etc.
+ */
+router.patch('/assessments/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const {
+      title,
+      status,
+      description,
+      durationMinutes,
+      passingMarks,
+      courseId,
+      course_id,
+      attemptLimit,
+      attempt_limit,
+      scheduleOpenAt,
+      schedule_open_at,
+      scheduleCloseAt,
+      schedule_close_at
+    } = req.body;
+    const client = supabaseAdmin || supabase;
+
+    if (title !== undefined) {
+      if (typeof title !== 'string' || title.trim().length < 3) {
+        return res.status(400).json({ status: 'fail', message: 'Title must be at least 3 characters long.' });
+      }
+    }
+
+    const validStatuses = ['DRAFT', 'SAVED', 'PUBLISHED', 'CLOSED', 'ARCHIVED'];
+    let normalizedStatus = undefined;
+    if (status !== undefined) {
+      normalizedStatus = String(status).toUpperCase().trim();
+      if (!validStatuses.includes(normalizedStatus)) {
+        return res.status(400).json({
+          status: 'fail',
+          message: `Invalid status "${status}". Allowed values: ${validStatuses.join(', ')}`
+        });
+      }
+    }
+
+    const updates = { updated_at: new Date().toISOString() };
+    if (title !== undefined) updates.title = title.trim();
+    if (normalizedStatus !== undefined) updates.status = normalizedStatus;
+    if (description !== undefined) updates.description = description.trim();
+    if (durationMinutes !== undefined) updates.duration_minutes = parseInt(durationMinutes, 10);
+    if (passingMarks !== undefined) updates.passing_marks = parseInt(passingMarks, 10);
+    if (courseId !== undefined || course_id !== undefined) updates.course_id = parseInt(courseId || course_id, 10);
+    if (attemptLimit !== undefined || attempt_limit !== undefined) {
+      updates.attempt_limit = Math.max(1, parseInt(attemptLimit || attempt_limit, 10) || 1);
+    }
+    if (scheduleOpenAt !== undefined || schedule_open_at !== undefined) {
+      updates.schedule_open_at = scheduleOpenAt || schedule_open_at || null;
+    }
+    if (scheduleCloseAt !== undefined || schedule_close_at !== undefined) {
+      updates.schedule_close_at = scheduleCloseAt || schedule_close_at || null;
+    }
+
+    if (client) {
+      const { data, error } = await client
+        .from('assessments')
+        .update(updates)
+        .eq('assessment_id', id)
+        .select('*')
+        .single();
+
+      if (error) {
+        return res.status(400).json({ status: 'fail', message: error.message });
+      }
+
+      return res.status(200).json({
+        status: 'success',
+        message: 'Assessment updated successfully.',
+        data: { assessment: data }
+      });
+    }
+
+    res.status(200).json({ status: 'success', message: 'Assessment updated.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route PATCH /api/v1/teacher/assessments/:id/archive
+ * @desc Toggle archive status (ARCHIVED vs SAVED/DRAFT)
+ */
+router.patch('/assessments/:id/archive', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const client = supabaseAdmin || supabase;
+
+    if (!client) {
+      return res.status(500).json({ status: 'error', message: 'Database client not initialized.' });
+    }
+
+    const { data: current, error: getErr } = await client
+      .from('assessments')
+      .select('assessment_id, status, title')
+      .eq('assessment_id', id)
+      .single();
+
+    if (getErr || !current) {
+      return res.status(404).json({ status: 'fail', message: 'Assessment not found.' });
+    }
+
+    const nextStatus = current.status === 'ARCHIVED' ? 'SAVED' : 'ARCHIVED';
+
+    const { data: updated, error: updErr } = await client
+      .from('assessments')
+      .update({ status: nextStatus, updated_at: new Date().toISOString() })
+      .eq('assessment_id', id)
+      .select('*')
+      .single();
+
+    if (updErr) {
+      return res.status(400).json({ status: 'fail', message: updErr.message });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: nextStatus === 'ARCHIVED'
+        ? `Assessment "${current.title}" archived.`
+        : `Assessment "${current.title}" restored from archive.`,
+      data: { assessment: updated }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route DELETE /api/v1/teacher/assessments/:id
+ * @desc Delete assessment with explicit warning when attempts exist
+ */
+router.delete('/assessments/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const force = req.query.force === 'true';
+    const client = supabaseAdmin || supabase;
+
+    if (!client) {
+      return res.status(500).json({ status: 'error', message: 'Database client not initialized.' });
+    }
+
+    // 1. Check assessment exists
+    const { data: assessment, error: fetchErr } = await client
+      .from('assessments')
+      .select('assessment_id, title')
+      .eq('assessment_id', id)
+      .single();
+
+    if (fetchErr || !assessment) {
+      return res.status(404).json({ status: 'fail', message: `Assessment #${id} not found.` });
+    }
+
+    // 2. Check attempts count
+    let attemptsCount = teacherReviewAttempts.filter(a => String(a.assessment_id) === String(id)).length;
+    try {
+      const { count, error: attErr } = await client
+        .from('attempts')
+        .select('*', { count: 'exact', head: true })
+        .eq('assessment_id', id);
+      if (!attErr && count !== null && count !== undefined) {
+        attemptsCount += count;
+      }
+    } catch (e) {
+      console.warn('Error checking attempts in teacher delete:', e.message);
+    }
+
+    // If attempts exist and force is false, return warning
+    if (attemptsCount > 0 && !force) {
+      return res.status(409).json({
+        status: 'fail',
+        code: 'ATTEMPTS_EXIST',
+        hasAttempts: true,
+        attemptsCount,
+        message: `⚠️ Warning: ${attemptsCount} student submission(s) exist for "${assessment.title}". Deleting will permanently erase all student scores, answers, and records. Confirm with force=true to proceed.`,
+        requiresConfirmation: true
+      });
+    }
+
+    // Delete questions and attempts
+    try {
+      await client.from('questions').delete().eq('assessment_id', id);
+    } catch (e) {}
+
+    if (attemptsCount > 0 && force) {
+      try {
+        await client.from('attempts').delete().eq('assessment_id', id);
+      } catch (e) {}
+      teacherReviewAttempts = teacherReviewAttempts.filter(a => String(a.assessment_id) !== String(id));
+    }
+
+    const { error: delErr } = await client
+      .from('assessments')
+      .delete()
+      .eq('assessment_id', id);
+
+    if (delErr) {
+      return res.status(400).json({ status: 'fail', message: delErr.message });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: `Assessment "${assessment.title}" deleted.`
     });
   } catch (error) {
     next(error);
@@ -791,35 +948,50 @@ router.post('/courses/:id/students', async (req, res, next) => {
     const uniId = req.user.university_id || 1;
     const client = supabaseAdmin || supabase;
 
-    if (!name || typeof name !== 'string' || name.trim().length === 0) {
-      return res.status(400).json({ status: 'fail', message: 'Student full name is required.' });
-    }
-    if (!rollNumber || typeof rollNumber !== 'string' || rollNumber.trim().length === 0) {
-      return res.status(400).json({ status: 'fail', message: 'Roll number is required.' });
-    }
     if (!email || !isValidEmailFormat(email)) {
-      return res.status(400).json({ status: 'fail', message: 'Valid university email format is required.' });
+      return res.status(400).json({ status: 'fail', message: 'Valid university email address is required.' });
     }
 
     // 1. Lowercase and normalize
     const normalizedEmail = email.trim().toLowerCase();
-    const cleanName = name.trim();
-    const cleanRoll = rollNumber.trim().toUpperCase();
+    const cleanRoll = ((rollNumber || normalizedEmail.split('@')[0]) + '').trim().toUpperCase();
+    const cleanName = (name || normalizedEmail.split('@')[0]).trim();
 
-    // 2. Detect duplicate enrollment in this course
-    if (client) {
-      const { data: existing } = await client
-        .from('students')
-        .select('student_id, email, roll_number')
-        .eq('course_id', courseId)
-        .or(`email.ilike.${normalizedEmail},roll_number.eq.${cleanRoll}`);
-
-      if (existing && existing.length > 0) {
-        return res.status(400).json({
-          status: 'fail',
-          message: `Duplicate detected: A student with email "${normalizedEmail}" or roll number "${cleanRoll}" is already enrolled in this course.`
-        });
+    // 2. Detect duplicate enrollment in this course (by email or roll number)
+    let duplicateMatch = null;
+    try {
+      const dupCheck = await query(
+        `SELECT student_id, email, roll_number, name FROM public.students 
+         WHERE course_id = $1 AND (LOWER(email) = $2 OR UPPER(roll_number) = $3)`,
+        [courseId, normalizedEmail, cleanRoll]
+      );
+      if (dupCheck.rows && dupCheck.rows.length > 0) {
+        duplicateMatch = dupCheck.rows[0];
       }
+    } catch (e) {}
+
+    if (!duplicateMatch && client) {
+      try {
+        const { data: existing } = await client
+          .from('students')
+          .select('student_id, email, roll_number, name')
+          .eq('course_id', courseId)
+          .or(`email.ilike.${normalizedEmail},roll_number.eq.${cleanRoll}`);
+
+        if (existing && existing.length > 0) {
+          duplicateMatch = existing[0];
+        }
+      } catch (e) {}
+    }
+
+    if (duplicateMatch) {
+      const isEmailDup = (duplicateMatch.email || '').toLowerCase() === normalizedEmail;
+      return res.status(400).json({
+        status: 'fail',
+        message: isEmailDup
+          ? `Duplicate email detected: Student with email "${normalizedEmail}" is already enrolled in this course.`
+          : `Duplicate roll number detected: Student with roll number "${cleanRoll}" is already enrolled in this course.`
+      });
     }
 
     // 3. Domain Check & Warning
@@ -856,6 +1028,12 @@ router.post('/courses/:id/students', async (req, res, next) => {
         .single();
 
       if (insErr) {
+        if (insErr.message?.toLowerCase().includes('duplicate') || insErr.message?.toLowerCase().includes('unique')) {
+          return res.status(400).json({
+            status: 'fail',
+            message: `Duplicate email detected: Student with email "${normalizedEmail}" is already enrolled in this course.`
+          });
+        }
         return res.status(400).json({ status: 'fail', message: insErr.message });
       }
       createdStudent = inserted;
@@ -900,15 +1078,28 @@ router.post('/courses/:id/students/bulk', async (req, res, next) => {
     // 1. Fetch currently enrolled students to detect duplicates
     const existingEmails = new Set();
     const existingRolls = new Set();
-    if (client) {
-      const { data: curList } = await client
-        .from('students')
-        .select('email, roll_number')
-        .eq('course_id', courseId);
-      (curList || []).forEach(s => {
+    try {
+      const curRes = await query(
+        `SELECT email, roll_number FROM public.students WHERE course_id = $1`,
+        [courseId]
+      );
+      (curRes.rows || []).forEach(s => {
         if (s.email) existingEmails.add(s.email.toLowerCase().trim());
         if (s.roll_number) existingRolls.add(s.roll_number.toUpperCase().trim());
       });
+    } catch (e) {}
+
+    if (client) {
+      try {
+        const { data: curList } = await client
+          .from('students')
+          .select('email, roll_number')
+          .eq('course_id', courseId);
+        (curList || []).forEach(s => {
+          if (s.email) existingEmails.add(s.email.toLowerCase().trim());
+          if (s.roll_number) existingRolls.add(s.roll_number.toUpperCase().trim());
+        });
+      } catch (e) {}
     }
 
     const seenInBatchEmails = new Set();
@@ -920,25 +1111,26 @@ router.post('/courses/:id/students/bulk', async (req, res, next) => {
     let nonInstitutionalCount = 0;
 
     for (const item of students) {
-      const rawName = (item.name || '').trim();
-      const rawRoll = (item.rollNumber || item.roll_number || '').trim().toUpperCase();
       const rawEmail = (item.email || '').trim().toLowerCase();
 
-      // Check format
-      if (!rawName || !rawRoll || !isValidEmailFormat(rawEmail)) {
-        invalidRecords.push({ name: rawName, rollNumber: rawRoll, email: rawEmail, reason: 'Missing name/roll or invalid email format' });
+      // Check email format
+      if (!rawEmail || !isValidEmailFormat(rawEmail)) {
+        invalidRecords.push({ email: rawEmail, reason: 'Invalid or missing university email format' });
         continue;
       }
 
-      // Check duplicate in batch
+      const rawRoll = ((item.rollNumber || item.roll_number || rawEmail.split('@')[0]) + '').trim().toUpperCase();
+      const rawName = (item.name || rawEmail.split('@')[0]).trim();
+
+      // Check duplicate in submitted batch
       if (seenInBatchEmails.has(rawEmail) || seenInBatchRolls.has(rawRoll)) {
-        skippedDuplicates.push({ name: rawName, rollNumber: rawRoll, email: rawEmail, reason: 'Duplicate in submitted list' });
+        skippedDuplicates.push({ name: rawName, rollNumber: rawRoll, email: rawEmail, reason: 'Duplicate in submitted CSV/list' });
         continue;
       }
 
       // Check duplicate against already enrolled
       if (existingEmails.has(rawEmail) || existingRolls.has(rawRoll)) {
-        skippedDuplicates.push({ name: rawName, rollNumber: rawRoll, email: rawEmail, reason: 'Already enrolled in course' });
+        skippedDuplicates.push({ name: rawName, rollNumber: rawRoll, email: rawEmail, reason: 'Already enrolled in this course' });
         continue;
       }
 
@@ -958,8 +1150,47 @@ router.post('/courses/:id/students/bulk', async (req, res, next) => {
       });
     }
 
+    if (validToInsert.length === 0) {
+      if (skippedDuplicates.length > 0) {
+        return res.status(200).json({
+          status: 'success',
+          message: `All ${skippedDuplicates.length} student email(s) in this file are already enrolled in this course (duplicates skipped).`,
+          data: {
+            enrolledCount: 0,
+            skippedDuplicatesCount: skippedDuplicates.length,
+            invalidCount: invalidRecords.length,
+            nonInstitutionalCount,
+            enrolledStudents: [],
+            skippedDuplicates,
+            invalidRecords
+          }
+        });
+      }
+      return res.status(400).json({
+        status: 'fail',
+        message: 'No valid student email records found in the uploaded file.'
+      });
+    }
+
     let insertedRecords = [];
-    if (validToInsert.length > 0 && client) {
+    try {
+      for (const st of validToInsert) {
+        const ins = await query(
+          `INSERT INTO public.students (course_id, university_id, name, roll_number, email)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT DO NOTHING
+           RETURNING *`,
+          [st.course_id, st.university_id, st.name, st.roll_number, st.email]
+        );
+        if (ins.rows && ins.rows[0]) {
+          insertedRecords.push(ins.rows[0]);
+        }
+      }
+    } catch (pgBulkErr) {
+      console.warn('PG bulk insert warning:', pgBulkErr.message);
+    }
+
+    if (insertedRecords.length === 0 && client) {
       const { data: insData, error: insErr } = await client
         .from('students')
         .insert(validToInsert)
@@ -971,10 +1202,13 @@ router.post('/courses/:id/students/bulk', async (req, res, next) => {
       insertedRecords = insData || [];
     }
 
+    const message = skippedDuplicates.length > 0
+      ? `Enrolled ${insertedRecords.length} student(s) successfully. Note: ${skippedDuplicates.length} duplicate email(s) were detected and skipped.`
+      : `Enrolled ${insertedRecords.length} student(s) successfully.`;
+
     res.status(201).json({
       status: 'success',
-      message: `Enrolled ${insertedRecords.length} student(s) successfully. ${skippedDuplicates.length} duplicate(s) skipped.` +
-        (nonInstitutionalCount > 0 ? ` ⚠️ ${nonInstitutionalCount} student(s) use non-institutional domains.` : ''),
+      message: message + (nonInstitutionalCount > 0 ? ` ⚠️ ${nonInstitutionalCount} student(s) use non-institutional domains.` : ''),
       data: {
         enrolledCount: insertedRecords.length,
         skippedDuplicatesCount: skippedDuplicates.length,

@@ -133,10 +133,11 @@ export const createTeacherCourse = async (token, courseData) => {
   });
 };
 
-export const publishAssessment = async (token, assessmentId) => {
+export const publishAssessment = async (token, assessmentId, options = {}) => {
   return await request(`/teacher/assessments/${assessmentId}/publish`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}` }
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(options)
   });
 };
 
@@ -680,6 +681,43 @@ export const uploadAdminCSV = async (token, file) => {
 
 // --- ASSESSMENTS API ---
 
+export const extractPdfLectureNotes = async (token, file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const deviceToken = getDeviceToken();
+  const response = await fetch(`${API_BASE_URL}/assessments/extract-pdf`, {
+    method: 'POST',
+    headers: {
+      'x-device-token': deviceToken,
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    },
+    body: formData
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const error = new Error(data.message || `PDF extraction failed with status ${response.status}`);
+    error.code = data.code;
+    error.hasReadableText = data.hasReadableText;
+    error.data = data.data;
+    throw error;
+  }
+
+  return data;
+};
+
+export const generateAssessmentQuestions = async (token, payload) => {
+  return await request('/assessments/generate-questions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify(payload)
+  });
+};
+
 export const createAssessment = async (token, assessmentData) => {
   return await request('/assessments', {
     method: 'POST',
@@ -708,8 +746,102 @@ export const fetchAssessmentById = async (token, id) => {
   });
 };
 
+export const updateAssessment = async (token, id, updates) => {
+  return await request(`/assessments/${id}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify(updates)
+  });
+};
+
+export const archiveAssessment = async (token, id) => {
+  return await request(`/assessments/${id}/archive`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+};
+
+export const checkAssessmentAttempts = async (token, id) => {
+  return await request(`/assessments/${id}/attempts-check`, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+};
+
+export const deleteAssessment = async (token, id, force = false) => {
+  const query = force ? '?force=true' : '';
+  return await request(`/assessments/${id}${query}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+};
+
 export const bootstrapSystem = async () => {
   return await request('/bootstrap', {
     method: 'POST'
+  });
+};
+
+// --- EXPORT API ---
+
+export const exportToGoogleDoc = async (token, assessmentId, options = {}) => {
+  const payload = typeof options === 'boolean' ? { includeAnswerKey: options } : options;
+  return await request(`/exports/${assessmentId}/google-doc`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload)
+  });
+};
+
+export const exportToPdf = async (token, assessmentId, options = {}) => {
+  const payload = typeof options === 'boolean' ? { includeAnswerKey: options } : options;
+  return await request(`/exports/${assessmentId}/pdf`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload)
+  });
+};
+
+export const exportToMoodle = async (token, assessmentId, options = {}) => {
+  return await request(`/exports/${assessmentId}/moodle`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(options || {})
+  });
+};
+
+export const exportToGoogleForms = async (token, assessmentId, options = {}) => {
+  return await request(`/exports/${assessmentId}/google-forms`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(options || {})
+  });
+};
+
+export const exportToJson = async (token, assessmentId) => {
+  return await request(`/exports/${assessmentId}/json`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const fetchExportHistory = async (token, assessmentId = null) => {
+  const qs = assessmentId ? `?assessmentId=${assessmentId}` : '';
+  return await request(`/exports/history${qs}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const deleteExportHistoryItem = async (token, exportId) => {
+  return await request(`/exports/history/${exportId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` }
   });
 };

@@ -6,6 +6,7 @@ import teacherRoutes from './teacher.routes.js';
 import quizRoutes from './quiz.routes.js';
 import assessmentRoutes from './assessment.routes.js';
 import evaluationRoutes from './evaluation.routes.js';
+import exportRoutes from './export.routes.js';
 
 const router = Router();
 
@@ -16,5 +17,6 @@ router.use('/teacher', teacherRoutes);
 router.use('/assessments', assessmentRoutes);
 router.use('/quizzes', quizRoutes);
 router.use('/evaluations', evaluationRoutes);
+router.use('/exports', exportRoutes);
 
 export default router;

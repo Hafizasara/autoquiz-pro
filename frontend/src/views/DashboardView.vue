@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuth } from '../store/auth';
 import {
@@ -9,8 +9,16 @@ import {
   publishAssessment,
   revertAssessmentDraft,
   deleteDraftAssessment,
+  updateAssessment,
+  archiveAssessment,
+  checkAssessmentAttempts,
+  deleteAssessment,
   reviewStudentAttempt,
   createQuizExport,
+  exportToGoogleDoc,
+  exportToPdf,
+  exportToMoodle,
+  exportToGoogleForms,
   retryAiFailure,
   dismissAiFailure,
   fetchCourseHub,
@@ -80,7 +88,60 @@ const educatorDashboardStats = ref({
 const teacherLoading = ref(true);
 const teacherActiveTab = ref('COURSES'); // 'COURSES' | 'DRAFTS' | 'PUBLISHED' | 'REVIEWS' | 'EXPORTS_AI'
 const reviewFilter = ref('ALL'); // 'ALL' | 'FLAGGED'
-const assessmentStatusFilter = ref('ALL'); // 'ALL' | 'DRAFT' | 'PUBLISHED'
+const assessmentStatusFilter = ref('ALL'); // 'ALL' | 'DRAFT' | 'SAVED' | 'PUBLISHED' | 'CLOSED' | 'ARCHIVED'
+
+// Teacher Complete Lifecycle Assessments
+const teacherSaved = ref([]);
+const teacherClosed = ref([]);
+const teacherArchived = ref([]);
+const teacherAllAssessments = ref([]);
+
+// Assessment Search & Multi-Filters
+const assessmentSearchQuery = ref('');
+const assessmentCourseFilter = ref('ALL');
+const assessmentTypeFilter = ref('ALL');
+
+// Action Dropdown Popover for Assessment Table Row
+const activeActionDropdownId = ref(null);
+const toggleActionDropdown = (id, event) => {
+  if (event) event.stopPropagation();
+  activeActionDropdownId.value = activeActionDropdownId.value === id ? null : id;
+};
+const closeActionDropdown = () => {
+  activeActionDropdownId.value = null;
+};
+const handleWindowClick = () => {
+  if (activeActionDropdownId.value !== null) {
+    activeActionDropdownId.value = null;
+  }
+};
+
+// Rename Assessment Modal
+const showRenameAssessmentModal = ref(false);
+const renamingAssessmentItem = ref(null);
+const renameAssessmentTitleInput = ref('');
+const isRenamingAssessment = ref(false);
+const renameAssessmentError = ref('');
+
+// Student Preview in Dashboard
+const showStudentPreviewModal = ref(false);
+const previewQuizData = ref(null);
+const showTeacherGradingOverlay = ref(false);
+const simulatedStudentAnswers = ref({});
+const simulatedTimerSeconds = ref(3600);
+
+const formatSimulatedTime = (seconds) => {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+};
+
+// Delete with attempts warning in Dashboard
+const showDeleteWarningModal = ref(false);
+const deletingAssessmentItem = ref(null);
+const warningAttemptsCount = ref(0);
+const isDeletingAssessment = ref(false);
+const confirmForceDeleteCheckbox = ref(false);
 
 // Teacher Modals & Action States
 const showTeacherNewCourseModal = ref(false);
@@ -123,6 +184,7 @@ const studentRosterSearch = ref('');
 const showSingleStudentModal = ref(false);
 const singleStudentForm = ref({ name: '', rollNumber: '', email: '' });
 const isEnrollingSingle = ref(false);
+const singleEnrollError = ref('');
 
 // Bulk Students Add Modal
 const showBulkStudentModal = ref(false);
@@ -130,9 +192,11 @@ const bulkEnrollMode = ref('paste'); // 'paste' | 'csv'
 const bulkPasteText = ref('');
 const bulkParsedRows = ref([]);
 const bulkDuplicatesCount = ref(0);
+const bulkDuplicatesList = ref([]);
 const bulkInvalidCount = ref(0);
 const bulkNonInstitutionalCount = ref(0);
 const isEnrollingBulk = ref(false);
+const bulkEnrollError = ref('');
 
 // Edit Student Modal
 const showEditStudentModal = ref(false);
@@ -1258,7 +1322,17 @@ const loadTeacherData = async () => {
     const data = res.data || {};
     teacherCourses.value = data.courses || [];
     teacherDrafts.value = data.drafts || [];
+    teacherSaved.value = data.saved || [];
     teacherPublished.value = data.published || [];
+    teacherClosed.value = data.closed || [];
+    teacherArchived.value = data.archived || [];
+    teacherAllAssessments.value = data.allAssessments || [
+      ...(data.published || []),
+      ...(data.drafts || []),
+      ...(data.saved || []),
+      ...(data.closed || []),
+      ...(data.archived || [])
+    ];
     teacherReviewQueue.value = data.reviewQueue || [];
     teacherFlaggedCount.value = data.flaggedCount || 0;
     teacherExports.value = data.recentExports || [];
@@ -1277,6 +1351,178 @@ const loadTeacherData = async () => {
     }
   } finally {
     teacherLoading.value = false;
+  }
+};
+
+const filteredTeacherAssessments = computed(() => {
+  let list = teacherAllAssessments.value;
+  if (!list.length) {
+    list = [
+      ...teacherPublished.value,
+      ...teacherDrafts.value,
+      ...teacherSaved.value,
+      ...teacherClosed.value,
+      ...teacherArchived.value
+    ];
+  }
+
+  return list.filter(item => {
+    // 1. Text Search
+    if (assessmentSearchQuery.value.trim()) {
+      const q = assessmentSearchQuery.value.toLowerCase().trim();
+      const matchTitle = (item.title || '').toLowerCase().includes(q);
+      const matchCourse = (item.course_name || item.course_code || '').toLowerCase().includes(q);
+      const matchDesc = (item.description || '').toLowerCase().includes(q);
+      if (!matchTitle && !matchCourse && !matchDesc) return false;
+    }
+
+    // 2. Course Filter
+    if (assessmentCourseFilter.value !== 'ALL') {
+      if (String(item.course_id) !== String(assessmentCourseFilter.value)) return false;
+    }
+
+    // 3. Status Filter
+    if (assessmentStatusFilter.value !== 'ALL') {
+      const s = (item.status || 'DRAFT').toUpperCase();
+      if (s !== assessmentStatusFilter.value.toUpperCase()) return false;
+    }
+
+    // 4. Type Filter
+    if (assessmentTypeFilter.value !== 'ALL') {
+      const questions = Array.isArray(item.questions)
+        ? item.questions
+        : (typeof item.questions === 'string' ? JSON.parse(item.questions || '[]') : []);
+      const match = questions.some(q => (q.type || 'MCQ').toUpperCase() === assessmentTypeFilter.value.toUpperCase());
+      if (!match) return false;
+    }
+
+    return true;
+  });
+});
+
+const openRenameAssessmentModal = (item) => {
+  renamingAssessmentItem.value = item;
+  renameAssessmentTitleInput.value = item.title || '';
+  renameAssessmentError.value = '';
+  showRenameAssessmentModal.value = true;
+};
+
+const handleSaveRenamedAssessment = async () => {
+  if (!renameAssessmentTitleInput.value || renameAssessmentTitleInput.value.trim().length < 3) {
+    renameAssessmentError.value = 'Title must be at least 3 characters long.';
+    return;
+  }
+  isRenamingAssessment.value = true;
+  renameAssessmentError.value = '';
+  try {
+    const res = await updateAssessment(auth.token.value, renamingAssessmentItem.value.assessment_id, {
+      title: renameAssessmentTitleInput.value.trim()
+    });
+    if (res.status === 'success') {
+      renamingAssessmentItem.value.title = renameAssessmentTitleInput.value.trim();
+      triggerCopyToast(res.message || 'Assessment title renamed successfully!');
+      showRenameAssessmentModal.value = false;
+      await loadTeacherData();
+    }
+  } catch (err) {
+    renameAssessmentError.value = err.message || 'Failed to rename assessment.';
+  } finally {
+    isRenamingAssessment.value = false;
+  }
+};
+
+const openStudentPreviewFromDashboard = (quiz) => {
+  const qs = Array.isArray(quiz.questions)
+    ? quiz.questions
+    : (typeof quiz.questions === 'string' ? JSON.parse(quiz.questions || '[]') : []);
+
+  previewQuizData.value = {
+    title: quiz.title || 'Assessment Preview',
+    courseName: quiz.course_name || quiz.course_code || 'Curriculum Course',
+    courseCode: quiz.course_code || 'CRS',
+    durationMinutes: quiz.duration_minutes || 60,
+    totalMarks: quiz.total_marks || 100,
+    questions: qs
+  };
+  simulatedStudentAnswers.value = {};
+  showTeacherGradingOverlay.value = false;
+  simulatedTimerSeconds.value = (Number(quiz.duration_minutes) || 60) * 60;
+  showStudentPreviewModal.value = true;
+};
+
+const closeStudentPreview = () => {
+  showStudentPreviewModal.value = false;
+  previewQuizData.value = null;
+  showTeacherGradingOverlay.value = false;
+};
+
+const handleArchiveAssessmentInDashboard = async (quiz) => {
+  try {
+    const res = await archiveAssessment(auth.token.value, quiz.assessment_id);
+    if (res.status === 'success') {
+      triggerCopyToast(res.message || 'Assessment status updated.');
+      await loadTeacherData();
+    }
+  } catch (err) {
+    triggerCopyToast(err.message || 'Failed to update archive status.');
+  }
+};
+
+const handleStatusChangeInDashboard = async (quiz, newStatus) => {
+  try {
+    const res = await updateAssessment(auth.token.value, quiz.assessment_id, {
+      status: newStatus
+    });
+    if (res.status === 'success') {
+      triggerCopyToast(`Assessment moved to ${newStatus} status.`);
+      await loadTeacherData();
+    }
+  } catch (err) {
+    triggerCopyToast(err.message || `Failed to change status to ${newStatus}.`);
+  }
+};
+
+const handleDeleteAssessmentInDashboard = async (quiz) => {
+  deletingAssessmentItem.value = quiz;
+  confirmForceDeleteCheckbox.value = false;
+  try {
+    const checkRes = await checkAssessmentAttempts(auth.token.value, quiz.assessment_id);
+    const count = checkRes.data?.attemptsCount || 0;
+    warningAttemptsCount.value = count;
+
+    if (count > 0) {
+      showDeleteWarningModal.value = true;
+    } else {
+      if (confirm(`Are you sure you want to delete "${quiz.title}"? This action cannot be undone.`)) {
+        await executeDashboardDelete(quiz.assessment_id, false);
+      }
+    }
+  } catch (err) {
+    if (confirm(`Are you sure you want to delete "${quiz.title}"?`)) {
+      await executeDashboardDelete(quiz.assessment_id, false);
+    }
+  }
+};
+
+const executeDashboardDelete = async (assessmentId, force = false) => {
+  isDeletingAssessment.value = true;
+  try {
+    const res = await deleteAssessment(auth.token.value, assessmentId, force);
+    if (res.status === 'success') {
+      triggerCopyToast(res.message || 'Assessment deleted successfully.');
+      showDeleteWarningModal.value = false;
+      deletingAssessmentItem.value = null;
+      await loadTeacherData();
+    }
+  } catch (err) {
+    if (err.requiresConfirmation || err.code === 'ATTEMPTS_EXIST') {
+      warningAttemptsCount.value = err.attemptsCount || 1;
+      showDeleteWarningModal.value = true;
+    } else {
+      triggerCopyToast(err.message || 'Failed to delete assessment.');
+    }
+  } finally {
+    isDeletingAssessment.value = false;
   }
 };
 
@@ -1300,6 +1546,54 @@ const handleCreateTeacherCourse = async () => {
     triggerCopyToast(err.message || 'Failed to create course.');
   } finally {
     isCreatingTeacherCourse.value = false;
+  }
+};
+
+const showDashboardPublishModal = ref(false);
+const publishingDashboardAssessment = ref(null);
+const dashboardPublishForm = ref({
+  courseId: '',
+  attemptLimit: 1,
+  scheduleOpenAt: '',
+  scheduleCloseAt: ''
+});
+const dashboardPublishError = ref('');
+
+const openDashboardPublishModal = (quiz) => {
+  publishingDashboardAssessment.value = quiz;
+  dashboardPublishForm.value = {
+    courseId: quiz.course_id || (teacherCourses.value && teacherCourses.value[0]?.course_id) || '',
+    attemptLimit: quiz.attempt_limit || 1,
+    scheduleOpenAt: quiz.schedule_open_at ? quiz.schedule_open_at.substring(0, 16) : '',
+    scheduleCloseAt: quiz.schedule_close_at ? quiz.schedule_close_at.substring(0, 16) : ''
+  };
+  dashboardPublishError.value = '';
+  showDashboardPublishModal.value = true;
+};
+
+const handleExecuteDashboardPublish = async () => {
+  if (!publishingDashboardAssessment.value) return;
+  if (!dashboardPublishForm.value.courseId) {
+    dashboardPublishError.value = 'Please select a course to publish to.';
+    return;
+  }
+  isPublishingDraftId.value = publishingDashboardAssessment.value.assessment_id;
+  dashboardPublishError.value = '';
+  try {
+    const payload = {
+      courseId: dashboardPublishForm.value.courseId,
+      attemptLimit: Number(dashboardPublishForm.value.attemptLimit) || 1,
+      scheduleOpenAt: dashboardPublishForm.value.scheduleOpenAt ? new Date(dashboardPublishForm.value.scheduleOpenAt).toISOString() : null,
+      scheduleCloseAt: dashboardPublishForm.value.scheduleCloseAt ? new Date(dashboardPublishForm.value.scheduleCloseAt).toISOString() : null
+    };
+    const res = await publishAssessment(auth.token.value, publishingDashboardAssessment.value.assessment_id, payload);
+    triggerCopyToast(res.message || 'Assessment published to course successfully!');
+    showDashboardPublishModal.value = false;
+    await loadTeacherData();
+  } catch (err) {
+    dashboardPublishError.value = err.message || 'Failed to publish assessment.';
+  } finally {
+    isPublishingDraftId.value = null;
   }
 };
 
@@ -1369,9 +1663,11 @@ const handleFinalizeReview = async () => {
 
 const openExportModal = (quiz = null) => {
   exportForm.value = {
+    assessmentId: quiz?.assessment_id || null,
     assessmentTitle: quiz ? quiz.title : (teacherPublished.value[0]?.title || 'Curriculum Assessment Paper'),
     format: 'PDF',
-    courseCode: quiz?.course_code || 'CRS'
+    courseCode: quiz?.course_code || 'CRS',
+    quiz
   };
   showExportQuizModal.value = true;
 };
@@ -1379,20 +1675,59 @@ const openExportModal = (quiz = null) => {
 const handleGenerateExport = async () => {
   isCreatingExport.value = true;
   try {
-    const res = await createQuizExport(auth.token.value, exportForm.value);
-    triggerCopyToast(res.message || 'Export generated successfully!');
-    
-    // Trigger download in browser
-    const content = `AutoQuiz Pro Export Package\nTitle: ${exportForm.value.assessmentTitle}\nFormat: ${exportForm.value.format}\nGenerated At: ${new Date().toLocaleString()}\nInstitution: ${auth.user.value?.universityName || 'PTUT'}\nTeacher: ${auth.user.value?.name}\n`;
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${exportForm.value.assessmentTitle.toLowerCase().replace(/[^a-z0-9]/g, '-')}.${exportForm.value.format.toLowerCase()}`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    const token = auth.token.value || localStorage.getItem('autoquiz_token');
+    const aId = exportForm.value.assessmentId;
+    const format = exportForm.value.format;
+
+    let res = null;
+    if (aId) {
+      if (format === 'PDF') {
+        res = await exportToPdf(token, aId, { includeAnswerKey: true });
+      } else if (format === 'GOOGLE_DOC') {
+        res = await exportToGoogleDoc(token, aId, { includeAnswerKey: true });
+      } else if (format === 'MOODLE') {
+        res = await exportToMoodle(token, aId);
+      } else if (format === 'GOOGLE_FORMS') {
+        res = await exportToGoogleForms(token, aId);
+      }
+    }
+
+    if (res?.data?.content) {
+      // Trigger binary / base64 or text download
+      const isBase64 = res.data.isBase64 || false;
+      let blob;
+      if (isBase64) {
+        const binStr = atob(res.data.content);
+        const bytes = new Uint8Array(binStr.length);
+        for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+        blob = new Blob([bytes], { type: res.data.mimeType });
+      } else {
+        blob = new Blob([res.data.content], { type: res.data.mimeType });
+      }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = res.data.fileName || `${exportForm.value.assessmentTitle.toLowerCase().replace(/[^a-z0-9]/g, '-')}.${format.toLowerCase()}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      triggerCopyToast(`✅ "${res.data.fileName}" downloaded successfully!`);
+    } else {
+      // Fallback
+      const apiRes = await createQuizExport(token, exportForm.value);
+      triggerCopyToast(apiRes.message || 'Export generated successfully!');
+      const content = `AutoQuiz Pro Export Package\nTitle: ${exportForm.value.assessmentTitle}\nFormat: ${exportForm.value.format}\nGenerated At: ${new Date().toLocaleString()}\n`;
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${exportForm.value.assessmentTitle.toLowerCase().replace(/[^a-z0-9]/g, '-')}.${format.toLowerCase()}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
 
     showExportQuizModal.value = false;
     await loadTeacherData();
@@ -1444,6 +1779,57 @@ const filteredTeacherCourses = computed(() => {
            (c.department_name && c.department_name.toLowerCase().includes(q));
   });
 });
+
+const totalTeacherStudentsCount = computed(() => {
+  return teacherCourses.value.reduce((acc, c) => acc + (parseInt(c.student_count, 10) || 0), 0);
+});
+
+const openAddStudentForCourse = async (course) => {
+  selectedCourseHub.value = course;
+  singleStudentForm.value = { name: '', rollNumber: '', email: '' };
+  singleEnrollError.value = '';
+  showSingleStudentModal.value = true;
+  await loadCourseHubData(course.course_id);
+};
+
+const openBulkEnrollForCourse = async (course) => {
+  selectedCourseHub.value = course;
+  bulkPasteText.value = '';
+  bulkParsedRows.value = [];
+  bulkDuplicatesList.value = [];
+  bulkEnrollError.value = '';
+  showBulkStudentModal.value = true;
+  await loadCourseHubData(course.course_id);
+};
+
+const openAddStudentGeneral = async () => {
+  if (teacherCourses.value && teacherCourses.value.length > 0) {
+    const targetCourse = selectedCourseHub.value || teacherCourses.value[0];
+    await openAddStudentForCourse(targetCourse);
+  } else {
+    triggerCopyToast('No courses found. Please contact admin to be assigned a course before adding students.');
+  }
+};
+
+const openBulkEnrollGeneral = async () => {
+  if (teacherCourses.value && teacherCourses.value.length > 0) {
+    const targetCourse = selectedCourseHub.value || teacherCourses.value[0];
+    await openBulkEnrollForCourse(targetCourse);
+  } else {
+    triggerCopyToast('No courses found. Please contact admin to be assigned a course before adding students.');
+  }
+};
+
+const handleTeacherStudentsNav = async () => {
+  activeSection.value = 'students';
+  if (teacherCourses.value && teacherCourses.value.length > 0) {
+    if (!selectedCourseHub.value) {
+      selectedCourseHub.value = teacherCourses.value[0];
+    }
+    courseHubTab.value = 'students';
+    await loadCourseHubData(selectedCourseHub.value.course_id);
+  }
+};
 
 const openCourseHub = async (course) => {
   activeSection.value = 'courses';
@@ -1499,17 +1885,44 @@ const singleDomainWarning = computed(() => {
   return null;
 });
 
+const singleDuplicateWarning = computed(() => {
+  const em = (singleStudentForm.value.email || '').trim().toLowerCase();
+  const roll = (singleStudentForm.value.rollNumber || '').trim().toUpperCase();
+  if (!em && !roll) return null;
+  const roster = courseHubData.value?.students || [];
+  if (em) {
+    const match = roster.find(s => (s.email || '').toLowerCase().trim() === em);
+    if (match) {
+      return `Duplicate Email: Student with email "${em}" is already enrolled in this course (${match.name || 'Enrolled Student'}${match.roll_number ? ' - ' + match.roll_number : ''}).`;
+    }
+  }
+  if (roll) {
+    const match = roster.find(s => (s.roll_number || '').toUpperCase().trim() === roll);
+    if (match) {
+      return `Duplicate Roll Number: Student with roll number "${roll}" is already enrolled in this course (${match.name || 'Enrolled Student'}).`;
+    }
+  }
+  return null;
+});
+
 const handleEnrollSingleStudent = async () => {
   if (!selectedCourseHub.value) return;
+  singleEnrollError.value = '';
+  if (singleDuplicateWarning.value) {
+    singleEnrollError.value = singleDuplicateWarning.value;
+    return;
+  }
   isEnrollingSingle.value = true;
   try {
     const res = await enrollSingleStudent(auth.token.value, selectedCourseHub.value.course_id, singleStudentForm.value);
     triggerCopyToast(res.message || 'Student enrolled successfully!');
     singleStudentForm.value = { name: '', rollNumber: '', email: '' };
+    singleEnrollError.value = '';
     showSingleStudentModal.value = false;
     await loadCourseHubData(selectedCourseHub.value.course_id);
     await loadTeacherData();
   } catch (err) {
+    singleEnrollError.value = err.message || 'Failed to enroll student.';
     triggerCopyToast(err.message || 'Failed to enroll student.');
   } finally {
     isEnrollingSingle.value = false;
@@ -1521,47 +1934,103 @@ const parseBulkInput = () => {
   if (!text) {
     bulkParsedRows.value = [];
     bulkDuplicatesCount.value = 0;
+    bulkDuplicatesList.value = [];
     bulkInvalidCount.value = 0;
     bulkNonInstitutionalCount.value = 0;
+    bulkEnrollError.value = '';
     return;
   }
 
-  const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
   const rows = [];
   const seenEmails = new Set();
+  const seenRolls = new Set();
   const consumerDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com', 'mail.com', 'live.com', 'aol.com'];
-  
+
+  // Current enrolled students in this course
+  const existingRosterEmails = new Set(
+    (courseHubData.value?.students || [])
+      .map(s => (s.email || '').toLowerCase().trim())
+      .filter(Boolean)
+  );
+  const existingRosterRolls = new Set(
+    (courseHubData.value?.students || [])
+      .map(s => (s.roll_number || '').toUpperCase().trim())
+      .filter(Boolean)
+  );
+
   let dups = 0;
+  const dupEmails = [];
   let invalids = 0;
   let nonInst = 0;
 
   for (const line of lines) {
-    // Skip header line if detected
-    if (/name.*roll.*email/i.test(line) || /student.*roll/i.test(line)) continue;
+    // Skip common CSV header line
+    if (/^(name|student|roll|email|id|sr)/i.test(line) && /email/i.test(line)) continue;
 
-    const parts = line.includes('\t') ? line.split('\t') : line.split(',');
-    if (parts.length < 3) {
-      invalids++;
-      continue;
+    let parts = [];
+    if (line.includes('\t')) parts = line.split('\t');
+    else if (line.includes(',')) parts = line.split(',');
+    else if (line.includes(';')) parts = line.split(';');
+    else parts = [line];
+
+    parts = parts.map(p => p.trim().replace(/^["']|["']$/g, ''));
+
+    let email = '';
+    let name = '';
+    let rollNumber = '';
+
+    if (parts.length === 1) {
+      email = parts[0].toLowerCase();
+      name = email.split('@')[0];
+      rollNumber = email.split('@')[0].toUpperCase();
+    } else if (parts.length === 2) {
+      if (parts[0].includes('@')) {
+        email = parts[0].toLowerCase();
+        name = parts[1];
+        rollNumber = email.split('@')[0].toUpperCase();
+      } else {
+        email = parts[1].toLowerCase();
+        name = parts[0];
+        rollNumber = email.split('@')[0].toUpperCase();
+      }
+    } else {
+      const emailIdx = parts.findIndex(p => p.includes('@'));
+      if (emailIdx !== -1) {
+        email = parts[emailIdx].toLowerCase();
+        const otherParts = parts.filter((_, idx) => idx !== emailIdx);
+        name = otherParts[0] || email.split('@')[0];
+        rollNumber = (otherParts[1] || email.split('@')[0]).toUpperCase();
+      } else {
+        name = parts[0];
+        rollNumber = parts[1].toUpperCase();
+        email = parts[2].toLowerCase();
+      }
     }
-
-    const name = parts[0].trim();
-    const rollNumber = parts[1].trim().toUpperCase();
-    const email = parts[2].trim().toLowerCase();
 
     const isValidEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email);
-    if (!name || !rollNumber || !isValidEmail) {
+    if (!email || !isValidEmail) {
       invalids++;
       continue;
     }
 
-    if (seenEmails.has(email)) {
+    if (!name) name = email.split('@')[0];
+    if (!rollNumber) rollNumber = email.split('@')[0].toUpperCase();
+
+    // Check duplicate in file or already enrolled in this course
+    const isDupInFile = seenEmails.has(email) || seenRolls.has(rollNumber);
+    const isAlreadyEnrolled = existingRosterEmails.has(email) || existingRosterRolls.has(rollNumber);
+
+    if (isDupInFile || isAlreadyEnrolled) {
       dups++;
+      dupEmails.push(email);
       continue;
     }
-    seenEmails.add(email);
 
-    const domain = email.split('@')[1];
+    seenEmails.add(email);
+    seenRolls.add(rollNumber);
+
+    const domain = email.split('@')[1] || '';
     const isNonInst = consumerDomains.includes(domain);
     if (isNonInst) nonInst++;
 
@@ -1575,6 +2044,7 @@ const parseBulkInput = () => {
 
   bulkParsedRows.value = rows;
   bulkDuplicatesCount.value = dups;
+  bulkDuplicatesList.value = dupEmails;
   bulkInvalidCount.value = invalids;
   bulkNonInstitutionalCount.value = nonInst;
 };
@@ -1592,6 +2062,7 @@ const handleCSVFileUpload = (event) => {
 
 const handleEnrollBulkStudents = async () => {
   if (!selectedCourseHub.value || bulkParsedRows.value.length === 0) return;
+  bulkEnrollError.value = '';
   isEnrollingBulk.value = true;
   try {
     const res = await enrollBulkStudents(
@@ -1602,10 +2073,13 @@ const handleEnrollBulkStudents = async () => {
     triggerCopyToast(res.message || 'Bulk student enrollment complete!');
     bulkPasteText.value = '';
     bulkParsedRows.value = [];
+    bulkDuplicatesList.value = [];
+    bulkEnrollError.value = '';
     showBulkStudentModal.value = false;
     await loadCourseHubData(selectedCourseHub.value.course_id);
     await loadTeacherData();
   } catch (err) {
+    bulkEnrollError.value = err.message || 'Bulk enrollment failed.';
     triggerCopyToast(err.message || 'Bulk enrollment failed.');
   } finally {
     isEnrollingBulk.value = false;
@@ -1728,12 +2202,17 @@ const handleDeleteCourseMaterial = async (materialId) => {
 };
 
 onMounted(async () => {
+  window.addEventListener('click', handleWindowClick);
   if (auth.isTeacher.value) {
     activeSection.value = 'courses';
     await loadTeacherData();
   } else if (auth.isAdmin.value) {
     await loadAdminDashboard();
   }
+});
+
+onUnmounted(() => {
+  window.removeEventListener('click', handleWindowClick);
 });
 </script>
 
@@ -1831,6 +2310,14 @@ onMounted(async () => {
             </svg>
             <span v-if="!sidebarCollapsed">My Courses</span>
             <span v-if="!sidebarCollapsed && teacherCourses.length > 0" class="sidebar-badge-count sidebar-badge-blue">{{ teacherCourses.length }}</span>
+          </button>
+          <button :class="['sidebar-nav-item', activeSection === 'students' && 'active']" @click="handleTeacherStudentsNav">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            <span v-if="!sidebarCollapsed">Students Roster</span>
+            <span v-if="!sidebarCollapsed && totalTeacherStudentsCount > 0" class="sidebar-badge-count sidebar-badge-blue">{{ totalTeacherStudentsCount }}</span>
           </button>
           <button :class="['sidebar-nav-item', activeSection === 'assessments' && 'active']" @click="activeSection = 'assessments'">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
@@ -1968,6 +2455,7 @@ onMounted(async () => {
             <span v-else-if="auth.isAdmin.value && activeSection === 'transfer'">Transfer Workload</span>
             <span v-else-if="auth.isTeacher.value && activeSection === 'dashboard'">Educator Overview</span>
             <span v-else-if="auth.isTeacher.value && activeSection === 'courses'">My Courses &amp; Hub</span>
+            <span v-else-if="auth.isTeacher.value && activeSection === 'students'">Students Roster &amp; Enrollment</span>
             <span v-else-if="auth.isTeacher.value && activeSection === 'assessments'">Assessments &amp; Quizzes</span>
             <span v-else-if="auth.isTeacher.value && activeSection === 'reviews'">Review Submissions Queue</span>
             <span v-else-if="auth.isTeacher.value && activeSection === 'exports'">Exports &amp; AI Engine Monitor</span>
@@ -2074,10 +2562,35 @@ onMounted(async () => {
               </p>
             </div>
 
+            <div class="glass-card stat-card" @click="handleTeacherStudentsNav">
+              <div class="stat-number text-green">{{ totalTeacherStudentsCount }}</div>
+              <div class="stat-label">Enrolled Students</div>
+              <p class="stat-hint">+ Add Student / Bulk CSV</p>
+            </div>
+
             <div class="glass-card stat-card" @click="activeSection = 'exports'">
               <div class="stat-number text-primary">{{ educatorDashboardStats.exportsCount }}</div>
               <div class="stat-label">Exports &amp; AI</div>
               <p class="stat-hint">{{ educatorDashboardStats.exportsCount }} export packages</p>
+            </div>
+          </div>
+
+          <!-- Student Quick Actions Strip -->
+          <div class="glass-card teacher-quick-strip">
+            <div class="quick-strip-info">
+              <h4 class="quick-strip-title">Student Enrollment Actions</h4>
+              <p class="quick-strip-sub">Add university student emails individually or upload bulk rosters via CSV.</p>
+            </div>
+            <div class="quick-strip-actions">
+              <button class="btn btn-primary" @click="openAddStudentGeneral">
+                + Add Student
+              </button>
+              <button class="btn btn-secondary" @click="openBulkEnrollGeneral">
+                📥 Bulk Enroll (CSV)
+              </button>
+              <button class="btn btn-secondary" @click="handleTeacherStudentsNav">
+                📋 View Student Roster
+              </button>
             </div>
           </div>
         </div>
@@ -2094,6 +2607,12 @@ onMounted(async () => {
                 <p class="section-desc">Curriculum modules assigned to you or created under your educator profile. Click any course to open its full Course Page.</p>
               </div>
               <div class="action-btn-group">
+                <button v-if="teacherCourses.length > 0" class="btn btn-primary btn-sm" @click="openAddStudentGeneral">
+                  + Add Student
+                </button>
+                <button v-if="teacherCourses.length > 0" class="btn btn-secondary btn-sm" @click="openBulkEnrollGeneral">
+                  📥 Bulk Enroll (CSV)
+                </button>
                 <button class="btn btn-secondary btn-sm" @click="loadTeacherData">
                   Refresh
                 </button>
@@ -2156,9 +2675,23 @@ onMounted(async () => {
                   >
                     🚀 Open Course Page (Hub)
                   </button>
+                  <div class="flex gap-1 mt-1">
+                    <button
+                      class="btn btn-success btn-sm flex-1"
+                      @click="openAddStudentForCourse(c)"
+                    >
+                      + Add Student
+                    </button>
+                    <button
+                      class="btn btn-secondary btn-sm flex-1"
+                      @click="openBulkEnrollForCourse(c)"
+                    >
+                      📥 Bulk CSV
+                    </button>
+                  </div>
                   <router-link
                     :to="`/assessments/create?courseId=${c.course_id}`"
-                    class="btn btn-secondary btn-block btn-sm"
+                    class="btn btn-secondary btn-block btn-sm mt-1"
                   >
                     + Create Assessment for Course
                   </router-link>
@@ -2624,13 +3157,181 @@ onMounted(async () => {
         </div>
 
         <!-- ============================================== -->
+        <!-- SECTION 1B: TEACHER STUDENTS ROSTER & ENROLLMENT-->
+        <!-- ============================================== -->
+        <div v-if="activeSection === 'students'" class="tab-content-panel mt-3">
+          <div class="section-top-row">
+            <div>
+              <h3 class="section-title">Students Roster &amp; Enrollment</h3>
+              <p class="section-desc">Manage enrolled students across your courses, add students one-by-one by university email, or bulk upload via CSV.</p>
+            </div>
+            <div class="action-btn-group">
+              <button class="btn btn-primary btn-sm" @click="openAddStudentGeneral">
+                + Add Student
+              </button>
+              <button class="btn btn-secondary btn-sm" @click="openBulkEnrollGeneral">
+                📥 Bulk Enroll (Paste / CSV)
+              </button>
+            </div>
+          </div>
+
+          <!-- Course Selector -->
+          <div v-if="teacherCourses.length > 0" class="teacher-roster-selector">
+            <label class="teacher-roster-label">Course Roster:</label>
+            <select
+              class="teacher-roster-select"
+              :value="selectedCourseHub?.course_id"
+              @change="(e) => {
+                const c = teacherCourses.find(item => item.course_id === parseInt(e.target.value, 10));
+                if (c) { selectedCourseHub = c; loadCourseHubData(c.course_id); }
+              }"
+            >
+              <option v-for="c in teacherCourses" :key="c.course_id" :value="c.course_id">
+                {{ c.course_name }} ({{ c.course_code || 'CRS' }}) &bull; {{ c.student_count || 0 }} Enrolled Students
+              </option>
+            </select>
+          </div>
+
+          <!-- If no courses at all -->
+          <div v-if="teacherCourses.length === 0" class="glass-card empty-dashboard-card">
+            <h3 class="empty-title">No Courses Assigned Yet</h3>
+            <p class="empty-desc">You need at least one assigned course to manage student enrollments. Contact your admin to be assigned courses.</p>
+          </div>
+
+          <!-- Student Roster Panel (shows when selectedCourseHub is set) -->
+          <div v-else-if="selectedCourseHub" class="course-hub-tab-panel">
+            <!-- Roster Status Summary Bar -->
+            <div class="roster-status-strip mb-3 p-3 bg-white rounded border flex items-center justify-between flex-wrap gap-2">
+              <div class="flex items-center gap-3 text-xs">
+                <span class="font-bold text-gray-700">Roster Status:</span>
+                <span class="badge badge-success">
+                  <span class="badge-dot"></span> {{ courseHubData.analytics?.signedInCount || 0 }} Signed In
+                </span>
+                <span class="badge badge-warning">
+                  <span class="badge-dot"></span> {{ courseHubData.analytics?.neverSignedInCount || 0 }} Never Signed In
+                </span>
+                <span v-if="courseHubData.analytics?.nonInstitutionalCount > 0" class="badge-mini-danger font-bold">
+                  ⚠️ {{ courseHubData.analytics?.nonInstitutionalCount }} Non-Institutional Domain Warning
+                </span>
+              </div>
+              <div class="search-input-wrap text-xs">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="search-icon">
+                  <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input
+                  type="text"
+                  v-model="studentRosterSearch"
+                  placeholder="Filter roster by name, roll, email..."
+                  class="search-input py-1 text-xs"
+                />
+                <button v-if="studentRosterSearch" class="clear-search-btn" @click="studentRosterSearch = ''">&times;</button>
+              </div>
+            </div>
+
+            <!-- Empty Students State -->
+            <div v-if="!isLoadingCourseHub && courseHubData.students?.length === 0" class="glass-card empty-dashboard-card">
+              <div class="empty-icon-circle">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                </svg>
+              </div>
+              <h3 class="empty-title">No Students Enrolled in {{ selectedCourseHub.course_name }} Yet</h3>
+              <p class="empty-desc">Add university student emails individually or in bulk using a pasted list or CSV.</p>
+              <div class="action-btn-group justify-center">
+                <button class="btn btn-primary" @click="showSingleStudentModal = true">+ Add Student</button>
+                <button class="btn btn-secondary" @click="showBulkStudentModal = true">📥 Bulk Enroll from List/CSV</button>
+              </div>
+            </div>
+
+            <!-- Students Table -->
+            <div v-else class="table-responsive glass-card p-0">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Student Name</th>
+                    <th>Roll Number</th>
+                    <th>University Email</th>
+                    <th>Enrollment Scope</th>
+                    <th>Domain Validation</th>
+                    <th>Account Sign-In Status</th>
+                    <th>Attempts</th>
+                    <th class="text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="s in filteredCourseStudents" :key="s.student_id">
+                    <td>
+                      <div class="font-bold text-sm">{{ s.name }}</div>
+                    </td>
+                    <td>
+                      <span class="code-mono font-bold">{{ s.roll_number }}</span>
+                    </td>
+                    <td>
+                      <span class="code-mono text-xs">{{ s.email }}</span>
+                    </td>
+                    <td>
+                      <span v-if="s.enrollment_scope === 'DEPARTMENT'" class="badge badge-purple" title="Enrolled via Department">
+                        Dept Roster
+                      </span>
+                      <span v-else class="badge badge-info" title="Direct Course Enrollment">
+                        Course Direct
+                      </span>
+                    </td>
+                    <td>
+                      <span v-if="s.is_approved_domain" class="badge badge-success text-xs">
+                        ✓ Institutional
+                      </span>
+                      <span v-else class="badge-mini-danger font-bold text-xs">
+                        ⚠️ Non-Inst Domain
+                      </span>
+                    </td>
+                    <td>
+                      <span v-if="s.has_signed_in" class="badge badge-success text-xs">
+                        <span class="badge-dot"></span> Active (Signed In)
+                      </span>
+                      <span v-else class="badge badge-warning text-xs">
+                        Never Signed In
+                      </span>
+                    </td>
+                    <td>
+                      <span class="badge badge-gray text-xs font-mono font-bold">
+                        {{ s.attempt_count || 0 }}
+                      </span>
+                    </td>
+                    <td class="text-right">
+                      <div class="action-btn-group justify-end">
+                        <button
+                          class="btn btn-secondary btn-xs"
+                          @click="openEditStudentModal(s)"
+                          title="Edit Student Info"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          class="btn btn-outline-danger btn-xs"
+                          @click="confirmRemoveStudent(s)"
+                          title="Unenroll Student from Course"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================== -->
         <!-- SECTION 2: INTEGRATED ASSESSMENTS & QUIZZES    -->
         <!-- ============================================== -->
         <div v-if="activeSection === 'assessments'" class="tab-content-panel mt-3">
           <div class="section-top-row">
             <div>
-              <h3 class="section-title">Assessments &amp; Quizzes ({{ teacherDrafts.length + teacherPublished.length }})</h3>
-              <p class="section-desc">Manage all draft assessments, published quizzes, and evaluation instruments in one place.</p>
+              <h3 class="section-title">Assessments &amp; Quizzes ({{ (teacherAllAssessments.length || (teacherDrafts.length + teacherPublished.length + teacherSaved.length + teacherClosed.length + teacherArchived.length)) }})</h3>
+              <p class="section-desc">Manage all draft assessments, published quizzes, and evaluation instruments in one place with full lifecycle status tracking.</p>
             </div>
             <div class="action-btn-group">
               <router-link to="/assessments/create" class="btn btn-primary btn-sm">
@@ -2642,153 +3343,298 @@ onMounted(async () => {
             </div>
           </div>
 
-          <!-- Status Filter Pills -->
-          <div class="flex items-center gap-2 mb-4">
+          <!-- Status Segmented Tabs -->
+          <div class="assessment-status-tabs">
             <button
-              :class="['btn btn-xs', assessmentStatusFilter === 'ALL' ? 'btn-primary' : 'btn-secondary']"
+              :class="['status-tab-btn', assessmentStatusFilter === 'ALL' && 'active']"
               @click="assessmentStatusFilter = 'ALL'"
             >
-              All Assessments ({{ teacherDrafts.length + teacherPublished.length }})
+              All Assessments
+              <span class="status-count-badge">{{ teacherAllAssessments.length || (teacherDrafts.length + teacherPublished.length + teacherSaved.length + teacherClosed.length + teacherArchived.length) }}</span>
             </button>
             <button
-              :class="['btn btn-xs', assessmentStatusFilter === 'PUBLISHED' ? 'btn-primary' : 'btn-secondary']"
+              :class="['status-tab-btn', assessmentStatusFilter === 'PUBLISHED' && 'active']"
               @click="assessmentStatusFilter = 'PUBLISHED'"
             >
-              Live Quizzes ({{ teacherPublished.length }})
+              <span class="status-dot dot-published"></span> Live Quizzes
+              <span class="status-count-badge">{{ teacherPublished.length }}</span>
             </button>
             <button
-              :class="['btn btn-xs', assessmentStatusFilter === 'DRAFT' ? 'btn-primary' : 'btn-secondary']"
+              :class="['status-tab-btn', assessmentStatusFilter === 'DRAFT' && 'active']"
               @click="assessmentStatusFilter = 'DRAFT'"
             >
-              Draft Assessments ({{ teacherDrafts.length }})
+              <span class="status-dot dot-draft"></span> Drafts
+              <span class="status-count-badge">{{ teacherDrafts.length }}</span>
+            </button>
+            <button
+              :class="['status-tab-btn', assessmentStatusFilter === 'SAVED' && 'active']"
+              @click="assessmentStatusFilter = 'SAVED'"
+            >
+              <span class="status-dot dot-saved"></span> Saved
+              <span class="status-count-badge">{{ teacherSaved.length }}</span>
+            </button>
+            <button
+              :class="['status-tab-btn', assessmentStatusFilter === 'CLOSED' && 'active']"
+              @click="assessmentStatusFilter = 'CLOSED'"
+            >
+              <span class="status-dot dot-closed"></span> Closed
+              <span class="status-count-badge">{{ teacherClosed.length }}</span>
+            </button>
+            <button
+              :class="['status-tab-btn', assessmentStatusFilter === 'ARCHIVED' && 'active']"
+              @click="assessmentStatusFilter = 'ARCHIVED'"
+            >
+              <span class="status-dot dot-archived"></span> Archived
+              <span class="status-count-badge">{{ teacherArchived.length }}</span>
             </button>
           </div>
 
-          <!-- Live Quizzes Table (Shown on ALL or PUBLISHED) -->
-          <div v-if="assessmentStatusFilter === 'ALL' || assessmentStatusFilter === 'PUBLISHED'" class="mb-6">
-            <h4 class="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-              <span class="badge-dot" style="background-color: #10b981;"></span>
-              Published &amp; Live Quizzes ({{ teacherPublished.length }})
-            </h4>
-
-            <div v-if="teacherPublished.length === 0" class="glass-card empty-dashboard-card p-4">
-              <p class="text-xs text-muted mb-2">No published quizzes live yet.</p>
-              <router-link to="/assessments/create" class="btn btn-primary btn-xs">+ Publish First Quiz</router-link>
+          <!-- Search & Filter Controls Toolbar -->
+          <div class="assessment-filter-toolbar">
+            <!-- Search Input -->
+            <div class="search-control-wrap">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="search-icon-svg">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input
+                type="text"
+                v-model="assessmentSearchQuery"
+                placeholder="Search assessments by title, description or code..."
+                class="toolbar-search-input"
+              />
+              <button
+                v-if="assessmentSearchQuery"
+                class="search-clear-btn"
+                @click="assessmentSearchQuery = ''"
+                title="Clear search"
+              >&times;</button>
             </div>
 
-            <div v-else class="table-responsive glass-card p-0">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Quiz Title &amp; Module</th>
-                    <th>Questions</th>
-                    <th>Marks (Passing / Total)</th>
-                    <th>Duration</th>
-                    <th>Status</th>
-                    <th>Published Date</th>
-                    <th class="text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="p in teacherPublished" :key="p.assessment_id">
-                    <td>
-                      <div class="course-name-cell">
-                        <div class="course-main-name font-bold">{{ p.title }}</div>
-                        <span class="code-mono course-code-badge">{{ p.course_code || 'CRS' }}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <span class="badge badge-info">{{ Array.isArray(p.questions) ? p.questions.length : (p.questions ? JSON.parse(p.questions || '[]').length : 0) }} Items</span>
-                    </td>
-                    <td>{{ p.passing_marks || 50 }} / {{ p.total_marks || 100 }} pts</td>
-                    <td>{{ p.duration_minutes || 60 }} mins</td>
-                    <td>
-                      <span class="badge badge-success">
-                        <span class="badge-dot"></span> Live
-                      </span>
-                    </td>
-                    <td class="cell-date">{{ formatDate(p.created_at) }}</td>
-                    <td class="text-right">
-                      <div class="action-btn-group justify-end">
-                        <button class="btn btn-secondary btn-xs" @click="openInspectQuizModal(p)" title="Preview quiz details & questions">Inspect</button>
-                        <button class="btn btn-secondary btn-xs" @click="openExportModal(p)" title="Export assessment">Export</button>
-                        <button class="btn btn-outline-amber btn-xs" @click="handleRevertToDraft(p.assessment_id)" title="Revert to Draft for revisions">Revert Draft</button>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            <!-- Course Filter -->
+            <div class="select-filter-group">
+              <label class="select-filter-label">Course:</label>
+              <select v-model="assessmentCourseFilter" class="toolbar-select">
+                <option value="ALL">All Courses ({{ teacherCourses.length }})</option>
+                <option v-for="c in teacherCourses" :key="c.course_id" :value="c.course_id">
+                  {{ c.course_code || 'CRS' }} - {{ c.course_name }}
+                </option>
+              </select>
+            </div>
+
+            <!-- Question Type Filter -->
+            <div class="select-filter-group">
+              <label class="select-filter-label">Type:</label>
+              <select v-model="assessmentTypeFilter" class="toolbar-select">
+                <option value="ALL">All Question Types</option>
+                <option value="MCQ">MCQ (Multiple Choice)</option>
+                <option value="SHORT_QUESTION">Short Answer / Conceptual</option>
+                <option value="CODING_QUESTION">Coding Problem</option>
+              </select>
+            </div>
+
+            <!-- Reset Button (if filters active) -->
+            <button
+              v-if="assessmentSearchQuery || assessmentCourseFilter !== 'ALL' || assessmentTypeFilter !== 'ALL'"
+              type="button"
+              class="btn-reset-filters"
+              @click="assessmentSearchQuery = ''; assessmentCourseFilter = 'ALL'; assessmentTypeFilter = 'ALL';"
+              title="Reset search and filters"
+            >
+              ↺ Reset
+            </button>
+
+            <!-- Result Count Right-Aligned -->
+            <div class="toolbar-results-count">
+              Showing <strong>{{ filteredTeacherAssessments.length }}</strong> of <strong>{{ teacherAllAssessments.length || (teacherDrafts.length + teacherPublished.length) }}</strong> assessments
             </div>
           </div>
 
-          <!-- Draft Assessments Table (Shown on ALL or DRAFT) -->
-          <div v-if="assessmentStatusFilter === 'ALL' || assessmentStatusFilter === 'DRAFT'">
-            <h4 class="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-              <span class="badge-dot" style="background-color: #f59e0b;"></span>
-              Draft Assessments ({{ teacherDrafts.length }})
-            </h4>
+          <!-- Assessments Master Table -->
+          <div class="table-responsive glass-card p-0">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Quiz Title &amp; Module</th>
+                  <th>Questions &amp; Type</th>
+                  <th>Marks (Passing / Total)</th>
+                  <th>Duration</th>
+                  <th>Status</th>
+                  <th>Created Date</th>
+                  <th class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="filteredTeacherAssessments.length === 0">
+                  <td colspan="7" class="text-center py-8 text-muted">
+                    No assessments match your current search and filter criteria.
+                  </td>
+                </tr>
+                <tr v-for="p in filteredTeacherAssessments" :key="p.assessment_id">
+                  <td>
+                    <div class="course-name-cell">
+                      <span class="course-main-name font-bold">{{ p.title }}</span>
+                      <span class="code-mono course-code-badge">{{ p.course_code || 'CRS' }}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="badge badge-info">
+                      {{ Array.isArray(p.questions) ? p.questions.length : (typeof p.questions === 'string' ? JSON.parse(p.questions || '[]').length : 0) }} Items
+                    </span>
+                  </td>
+                  <td>{{ p.passing_marks || 50 }} / {{ p.total_marks || 100 }} pts</td>
+                  <td>{{ p.duration_minutes || 60 }} mins</td>
+                  <td>
+                    <span :class="[
+                      'badge',
+                      (p.status || '').toUpperCase() === 'PUBLISHED' ? 'badge-success' :
+                      (p.status || '').toUpperCase() === 'SAVED' ? 'badge-info' :
+                      (p.status || '').toUpperCase() === 'CLOSED' ? 'badge-danger' :
+                      (p.status || '').toUpperCase() === 'ARCHIVED' ? 'badge-purple' : 'badge-warning'
+                    ]">
+                      <span class="badge-dot"></span> {{ (p.status || 'DRAFT').toUpperCase() }}
+                    </span>
+                  </td>
+                  <td class="cell-date">{{ formatDate(p.created_at) }}</td>
+                  <td class="text-right">
+                    <div class="table-actions-cell">
+                      <!-- Primary Contextual Action -->
+                      <button
+                        v-if="(p.status || '').toUpperCase() === 'DRAFT' || (p.status || '').toUpperCase() === 'SAVED'"
+                        class="btn btn-primary btn-xs action-btn-pill"
+                        :disabled="isPublishingDraftId === p.assessment_id"
+                        @click="openDashboardPublishModal(p)"
+                        title="Publish assessment and make live for students"
+                      >
+                        <span v-if="isPublishingDraftId === p.assessment_id">Publishing...</span>
+                        <span v-else>🚀 Publish</span>
+                      </button>
 
-            <div v-if="teacherDrafts.length === 0" class="glass-card empty-dashboard-card p-4">
-              <p class="text-xs text-muted mb-2">No draft assessments currently pending.</p>
-              <router-link to="/assessments/create" class="btn btn-primary btn-xs">+ Create New Draft</router-link>
-            </div>
+                      <button
+                        v-else-if="(p.status || '').toUpperCase() === 'CLOSED'"
+                        class="btn btn-primary btn-xs action-btn-pill"
+                        @click="handleStatusChangeInDashboard(p, 'PUBLISHED')"
+                        title="Re-open submissions"
+                      >
+                        🔓 Open
+                      </button>
 
-            <div v-else class="table-responsive glass-card p-0">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Title &amp; Module</th>
-                    <th>Questions</th>
-                    <th>Total Marks</th>
-                    <th>Duration</th>
-                    <th>Status</th>
-                    <th>Created</th>
-                    <th class="text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="d in teacherDrafts" :key="d.assessment_id">
-                    <td>
-                      <div class="course-name-cell">
-                        <div class="course-main-name font-bold">{{ d.title }}</div>
-                        <span class="code-mono course-code-badge">{{ d.course_code || 'CRS' }}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <span class="badge badge-info">{{ Array.isArray(d.questions) ? d.questions.length : (d.questions ? JSON.parse(d.questions || '[]').length : 0) }} Questions</span>
-                    </td>
-                    <td>{{ d.total_marks || 100 }} pts</td>
-                    <td>{{ d.duration_minutes || 60 }} mins</td>
-                    <td>
-                      <span class="badge badge-warning">
-                        <span class="badge-dot"></span> Draft
-                      </span>
-                    </td>
-                    <td class="cell-date">{{ formatDate(d.created_at) }}</td>
-                    <td class="text-right">
-                      <div class="action-btn-group justify-end">
+                      <button
+                        v-else-if="(p.status || '').toUpperCase() === 'ARCHIVED'"
+                        class="btn btn-secondary btn-xs action-btn-pill"
+                        @click="handleArchiveAssessmentInDashboard(p)"
+                        title="Restore assessment"
+                      >
+                        📂 Restore
+                      </button>
+
+                      <!-- Student View Preview -->
+                      <button
+                        class="btn btn-secondary btn-xs action-btn-pill"
+                        @click="openStudentPreviewFromDashboard(p)"
+                        title="Preview the quiz as a student would see it"
+                      >
+                        <span>👁️</span> Student View
+                      </button>
+
+                      <!-- Quick Export -->
+                      <button
+                        class="btn btn-secondary btn-xs action-btn-pill"
+                        @click="openExportModal(p)"
+                        title="Export assessment"
+                      >
+                        📥 Export
+                      </button>
+
+                      <!-- More Options Popover Dropdown (•••) -->
+                      <div class="relative inline-block text-left">
                         <button
-                          class="btn btn-primary btn-xs"
-                          :disabled="isPublishingDraftId === d.assessment_id"
-                          @click="handlePublishDraft(d.assessment_id)"
-                          title="Publish and make live for students"
+                          type="button"
+                          class="action-more-btn"
+                          @click="toggleActionDropdown(p.assessment_id, $event)"
+                          title="More options"
+                          :aria-expanded="activeActionDropdownId === p.assessment_id"
                         >
-                          <span v-if="isPublishingDraftId === d.assessment_id">Publishing...</span>
-                          <span v-else>🚀 Publish Quiz</span>
+                          <svg viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4">
+                            <circle cx="12" cy="5" r="1.75" />
+                            <circle cx="12" cy="12" r="1.75" />
+                            <circle cx="12" cy="19" r="1.75" />
+                          </svg>
                         </button>
-                        <button
-                          class="btn btn-outline-danger btn-xs"
-                          @click="handleDeleteDraft(d.assessment_id)"
-                          title="Discard draft"
+
+                        <!-- Dropdown Menu -->
+                        <div
+                          v-if="activeActionDropdownId === p.assessment_id"
+                          class="action-dropdown-popover"
+                          @click.stop
                         >
-                          Discard
-                        </button>
+                          <button class="dropdown-item" @click="closeActionDropdown(); openInspectQuizModal(p)">
+                            <span class="dropdown-item-icon">🔍</span> Inspect Curriculum
+                          </button>
+                          <button class="dropdown-item" @click="closeActionDropdown(); openStudentPreviewFromDashboard(p)">
+                            <span class="dropdown-item-icon">👁️</span> Preview as Student
+                          </button>
+                          <button class="dropdown-item" @click="closeActionDropdown(); openExportModal(p)">
+                            <span class="dropdown-item-icon">📥</span> Export File
+                          </button>
+                          <button class="dropdown-item" @click="closeActionDropdown(); openRenameAssessmentModal(p)">
+                            <span class="dropdown-item-icon">✏️</span> Rename Title
+                          </button>
+
+                          <div class="dropdown-divider"></div>
+
+                          <!-- Lifecycle status toggles -->
+                          <button
+                            v-if="(p.status || '').toUpperCase() === 'PUBLISHED'"
+                            class="dropdown-item text-amber"
+                            @click="closeActionDropdown(); handleRevertToDraft(p.assessment_id)"
+                          >
+                            <span class="dropdown-item-icon">↩️</span> Revert to Draft
+                          </button>
+                          <button
+                            v-if="(p.status || '').toUpperCase() === 'PUBLISHED'"
+                            class="dropdown-item"
+                            @click="closeActionDropdown(); handleStatusChangeInDashboard(p, 'CLOSED')"
+                          >
+                            <span class="dropdown-item-icon">🔒</span> Close Submissions
+                          </button>
+                          <button
+                            v-if="(p.status || '').toUpperCase() === 'CLOSED'"
+                            class="dropdown-item"
+                            @click="closeActionDropdown(); handleStatusChangeInDashboard(p, 'PUBLISHED')"
+                          >
+                            <span class="dropdown-item-icon">🔓</span> Re-open Submissions
+                          </button>
+                          <button
+                            v-if="(p.status || '').toUpperCase() === 'DRAFT' || (p.status || '').toUpperCase() === 'SAVED'"
+                            class="dropdown-item text-primary"
+                            @click="closeActionDropdown(); openDashboardPublishModal(p)"
+                          >
+                            <span class="dropdown-item-icon">🚀</span> Publish Quiz
+                          </button>
+
+                          <button
+                            class="dropdown-item"
+                            @click="closeActionDropdown(); handleArchiveAssessmentInDashboard(p)"
+                          >
+                            <span class="dropdown-item-icon">{{ (p.status || '').toUpperCase() === 'ARCHIVED' ? '📂' : '📦' }}</span>
+                            {{ (p.status || '').toUpperCase() === 'ARCHIVED' ? 'Restore from Archive' : 'Archive Assessment' }}
+                          </button>
+
+                          <div class="dropdown-divider"></div>
+
+                          <button
+                            class="dropdown-item text-danger"
+                            @click="closeActionDropdown(); handleDeleteAssessmentInDashboard(p)"
+                          >
+                            <span class="dropdown-item-icon">🗑️</span> Delete Assessment
+                          </button>
+                        </div>
                       </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -3102,6 +3948,111 @@ onMounted(async () => {
         </div>
 
         <!-- ============================================================= -->
+        <!-- MODAL 2.5: PUBLISH ASSESSMENT TO COURSE & SCHEDULE MODAL       -->
+        <!-- ============================================================= -->
+        <div v-if="showDashboardPublishModal && publishingDashboardAssessment" class="modal-overlay" @click.self="showDashboardPublishModal = false">
+          <div class="modal-card" style="max-width: 580px;">
+            <div class="modal-header">
+              <div class="modal-title-wrap">
+                <h3 class="modal-title">🚀 Publish Assessment to Course</h3>
+                <p class="modal-subtitle">Assign a curriculum course, set student attempt limits, and configure schedule windows.</p>
+              </div>
+              <button class="modal-close-btn" @click="showDashboardPublishModal = false">&times;</button>
+            </div>
+
+            <div v-if="dashboardPublishError" class="alert-box alert-error mb-3" style="margin: 16px 24px 0;">
+              ⚠️ {{ dashboardPublishError }}
+            </div>
+
+            <div class="modal-body" style="padding: 20px 24px; display: flex; flex-direction: column; gap: 16px;">
+              <!-- Target Info -->
+              <div style="background: #f1f5f9; padding: 12px 16px; border-radius: 10px; border-left: 4px solid #3b82f6;">
+                <div style="font-size: 0.75rem; text-transform: uppercase; color: #64748b; font-weight: 700;">Target Assessment</div>
+                <div style="font-size: 1rem; font-weight: 700; color: #0f172a; margin-top: 2px;">{{ publishingDashboardAssessment.title }}</div>
+                <div style="font-size: 0.8rem; color: #64748b; margin-top: 2px;">
+                  Current Status: <span class="badge badge-purple">{{ publishingDashboardAssessment.status }}</span>
+                </div>
+              </div>
+
+              <!-- Course Selection -->
+              <div class="form-group mb-0">
+                <label class="form-label" style="font-weight: 700;">Destination Course *</label>
+                <select v-model="dashboardPublishForm.courseId" class="form-select" style="width: 100%;">
+                  <option value="" disabled>-- Select Enrolled Course --</option>
+                  <option v-for="c in teacherCourses" :key="c.course_id" :value="c.course_id">
+                    {{ c.course_code }} - {{ c.course_name }}
+                  </option>
+                </select>
+                <span class="text-xs text-muted" style="margin-top: 4px; display: block;">Students registered in this course will have test-taking access.</span>
+              </div>
+
+              <!-- Attempt Limit (Default: 1) -->
+              <div class="form-group mb-0">
+                <label class="form-label" style="font-weight: 700;">Max Attempt Limit per Student *</label>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                  <input
+                    type="number"
+                    v-model="dashboardPublishForm.attemptLimit"
+                    min="1"
+                    max="20"
+                    class="form-input"
+                    style="max-width: 140px; font-weight: 700;"
+                  />
+                  <span class="text-xs text-muted"><strong>Default is 1 attempt.</strong></span>
+                </div>
+              </div>
+
+              <!-- Schedule Timings Window -->
+              <div style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 12px; padding: 14px;">
+                <div style="font-size: 0.85rem; font-weight: 700; color: #0f172a; margin-bottom: 4px;">
+                  ⏰ Schedule Assessment Availability (Optional)
+                </div>
+                <p style="font-size: 0.78rem; color: #64748b; margin-bottom: 10px;">
+                  Leave blank for immediate &amp; 24/7 access, or restrict test taking to a specific schedule window.
+                </p>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                  <div>
+                    <label style="font-size: 0.78rem; font-weight: 600; color: #334155; display: block; margin-bottom: 4px;">
+                      🟢 Open Time
+                    </label>
+                    <input
+                      type="datetime-local"
+                      v-model="dashboardPublishForm.scheduleOpenAt"
+                      class="form-input"
+                      style="width: 100%; font-size: 0.8rem; padding: 8px 10px; background: #fff;"
+                    />
+                  </div>
+                  <div>
+                    <label style="font-size: 0.78rem; font-weight: 600; color: #334155; display: block; margin-bottom: 4px;">
+                      🛑 Close Time
+                    </label>
+                    <input
+                      type="datetime-local"
+                      v-model="dashboardPublishForm.scheduleCloseAt"
+                      class="form-input"
+                      style="width: 100%; font-size: 0.8rem; padding: 8px 10px; background: #fff;"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="modal-footer" style="padding: 16px 24px;">
+              <button type="button" class="btn btn-secondary" @click="showDashboardPublishModal = false">Cancel</button>
+              <button
+                type="button"
+                class="btn btn-primary"
+                :disabled="isPublishingDraftId === publishingDashboardAssessment.assessment_id"
+                @click="handleExecuteDashboardPublish"
+              >
+                {{ isPublishingDraftId === publishingDashboardAssessment.assessment_id ? 'Publishing...' : '🚀 Confirm & Publish to Course' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================= -->
         <!-- MODAL 3: EXPORT QUIZ MODAL                                    -->
         <!-- ============================================================= -->
         <div v-if="showExportQuizModal" class="modal-overlay" @click.self="showExportQuizModal = false">
@@ -3129,9 +4080,9 @@ onMounted(async () => {
                   <label class="field-label">Export Format *</label>
                   <select v-model="exportForm.format" class="select-control" required>
                     <option value="PDF">Printable Exam Paper (PDF)</option>
-                    <option value="CSV">Student Marks &amp; Gradebook (CSV)</option>
-                    <option value="DOCX">Microsoft Word Package (DOCX)</option>
-                    <option value="MOODLE">LMS / Moodle XML Package</option>
+                    <option value="GOOGLE_DOC">Google Document (.html)</option>
+                    <option value="MOODLE">LMS / Moodle XML Package (.xml)</option>
+                    <option value="GOOGLE_FORMS">Google Form (.gs Script)</option>
                   </select>
                 </div>
               </div>
@@ -3172,14 +4123,70 @@ onMounted(async () => {
                   :key="idx"
                   class="p-3 mb-2 rounded bg-gray-50 border text-sm"
                 >
-                  <div class="font-bold">Q{{ idx + 1 }}: {{ q.question || q.title }}</div>
-                  <div v-if="q.options" class="mt-2 pl-3 text-xs text-gray-700">
+                  <div class="flex items-center justify-between gap-2 mb-1">
+                    <div class="font-bold">
+                      <span class="mr-1">Q{{ idx + 1 }}:</span>
+                      <span
+                        class="text-xs px-2 py-0.5 rounded font-semibold uppercase mr-2"
+                        :style="{
+                          backgroundColor: q.type === 'CODING_QUESTION' ? '#ECFDF5' : (q.type === 'SHORT_QUESTION' ? '#F3E8FF' : '#E0F2FE'),
+                          color: q.type === 'CODING_QUESTION' ? '#059669' : (q.type === 'SHORT_QUESTION' ? '#9333EA' : '#0284C7')
+                        }"
+                      >
+                        {{ q.type === 'CODING_QUESTION' ? 'Coding Problem' : (q.type === 'SHORT_QUESTION' ? 'Short Answer' : 'MCQ') }}
+                      </span>
+                      <span v-if="q.programmingLanguage" class="text-xs px-1.5 py-0.5 rounded font-mono font-bold bg-amber-100 text-amber-800">
+                        {{ q.programmingLanguage }}
+                      </span>
+                    </div>
+                    <span v-if="q.marks" class="text-xs font-bold text-gray-500 bg-white px-2 py-0.5 rounded border">
+                      {{ q.marks }} pts
+                    </span>
+                  </div>
+
+                  <div class="text-gray-800 mt-1 font-medium">{{ q.question || q.title }}</div>
+
+                  <!-- MCQ Options -->
+                  <div v-if="q.options && q.options.length" class="mt-2 pl-3 text-xs text-gray-700">
                     <div v-for="(opt, oIdx) in q.options" :key="oIdx" class="py-0.5">
                       &bull; {{ opt }}
                     </div>
                   </div>
-                  <div v-if="q.answer || q.correctAnswer" class="mt-2 text-xs text-success font-bold">
-                    Correct Key: {{ q.answer || q.correctAnswer }}
+                  <div v-if="q.answer || q.correctAnswer" class="mt-1.5 text-xs text-success font-bold">
+                    ✓ Correct Key: {{ q.answer || q.correctAnswer }}
+                  </div>
+                  <div v-if="q.explanation" class="mt-1 text-xs text-gray-500 italic">
+                    <strong>Explanation:</strong> {{ q.explanation }}
+                  </div>
+
+                  <!-- Short Question Model Answer / Rubric / Explanation -->
+                  <div v-if="q.type === 'SHORT_QUESTION' && (q.modelAnswer || q.rubric || q.explanation)" class="mt-2 text-xs bg-white p-2 rounded border border-purple-200">
+                    <div v-if="q.modelAnswer" class="text-purple-900 mb-1">
+                      <strong>Model Answer:</strong> {{ q.modelAnswer }}
+                    </div>
+                    <div v-if="q.rubric" class="text-gray-600 mb-1">
+                      <strong>Rubric:</strong> {{ q.rubric }}
+                    </div>
+                    <div v-if="q.explanation" class="text-gray-500 italic">
+                      <strong>Explanation:</strong> {{ q.explanation }}
+                    </div>
+                  </div>
+
+                  <!-- Coding Question Starter Code, IO, Rubric & Answer Key -->
+                  <div v-if="q.type === 'CODING_QUESTION'" class="mt-2 text-xs bg-gray-900 text-sky-300 p-2.5 rounded font-mono">
+                    <div class="text-gray-400 mb-1 text-[11px]">// Language: {{ q.programmingLanguage || 'Code' }} | Starter Code:</div>
+                    <pre class="overflow-x-auto whitespace-pre-wrap">{{ q.starterCode || '// Write code here' }}</pre>
+                    <div v-if="q.sampleInput || q.sampleOutput" class="mt-2 pt-2 border-t border-gray-800 text-[11px] text-gray-300 flex gap-4">
+                      <span v-if="q.sampleInput"><strong>Input:</strong> {{ q.sampleInput }}</span>
+                      <span v-if="q.sampleOutput"><strong>Output:</strong> {{ q.sampleOutput }}</span>
+                    </div>
+                    <div v-if="q.rubric" class="mt-2 text-xs text-amber-200 bg-gray-800 p-2 rounded font-sans">
+                      <strong>Rubric:</strong> {{ q.rubric }}
+                    </div>
+                    <div v-if="q.solutionCode" class="mt-2 text-xs bg-gray-950 text-emerald-400 p-2 rounded font-mono border border-emerald-900">
+                      <div class="text-emerald-500 font-semibold mb-1 text-[11px]">✓ Answer Key (Reference Solution):</div>
+                      <pre class="overflow-x-auto whitespace-pre-wrap">{{ q.solutionCode }}</pre>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -3189,6 +4196,290 @@ onMounted(async () => {
                 </button>
                 <button type="button" class="btn btn-secondary" @click="showInspectQuizModal = false">Close</button>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================= -->
+        <!-- MODAL 4A: STUDENT QUIZ PREVIEW MODAL                          -->
+        <!-- ============================================================= -->
+        <div v-if="showStudentPreviewModal && previewQuizData" class="modal-backdrop student-preview-backdrop" @click.self="closeStudentPreview">
+          <div class="modal-card student-preview-modal-card">
+            <!-- Student Exam Top Bar -->
+            <div class="student-exam-top-bar">
+              <div class="student-identity-tag">
+                <span class="student-avatar-sim">🎓</span>
+                <div>
+                  <div class="student-sim-label">STUDENT VIEW SIMULATION</div>
+                  <div class="student-sim-name">Candidate: Alex Rivera (Roll: 2024-CS-042)</div>
+                </div>
+              </div>
+
+              <div class="student-timer-box">
+                <span class="timer-icon">⏳</span>
+                <div class="timer-text">
+                  <span class="timer-countdown">{{ formatSimulatedTime(simulatedTimerSeconds) }}</span>
+                  <span class="timer-sub">Simulated Time Left</span>
+                </div>
+              </div>
+
+              <div class="student-modal-controls flex items-center gap-2">
+                <button
+                  type="button"
+                  :class="['btn btn-sm', showTeacherGradingOverlay ? 'btn-primary' : 'btn-outline-amber']"
+                  @click="showTeacherGradingOverlay = !showTeacherGradingOverlay"
+                  title="Toggle educator answer key, rubrics, and explanations"
+                >
+                  <span>{{ showTeacherGradingOverlay ? '👁️ Hide Teacher Key & Rubric' : '🔑 Show Teacher Answer Key & Rubric' }}</span>
+                </button>
+                <button type="button" class="close-btn text-white text-lg" @click="closeStudentPreview" title="Exit Preview">✕</button>
+              </div>
+            </div>
+
+            <!-- Exam Paper Header -->
+            <div class="exam-paper-header">
+              <div class="exam-paper-titles">
+                <h2 class="exam-paper-title">{{ previewQuizData.title }}</h2>
+                <div class="exam-paper-meta">
+                  <span class="meta-pill meta-course">📘 {{ previewQuizData.courseName }} ({{ previewQuizData.courseCode }})</span>
+                  <span class="meta-pill meta-duration">⏱️ {{ previewQuizData.durationMinutes }} Minutes</span>
+                  <span class="meta-pill meta-marks">🎯 {{ previewQuizData.totalMarks }} Marks Total</span>
+                  <span class="meta-pill meta-count">📝 {{ previewQuizData.questions.length }} Questions</span>
+                </div>
+              </div>
+              <div v-if="showTeacherGradingOverlay" class="grading-overlay-pill">
+                <span class="pulse-dot"></span> Teacher Solution &amp; Rubric Overlay Active
+              </div>
+            </div>
+
+            <!-- Student Instructions -->
+            <div class="exam-instructions-banner">
+              <div class="instructions-icon">ℹ️</div>
+              <div class="instructions-text">
+                <strong>Candidate Examination Guidelines:</strong> Answer all questions thoroughly. Once submitted, your answers will be evaluated based on algorithmic correctness and theoretical precision.
+              </div>
+            </div>
+
+            <!-- Questions Flow -->
+            <div class="student-questions-flow">
+              <div
+                v-for="(q, idx) in previewQuizData.questions"
+                :key="idx"
+                class="student-question-card"
+              >
+                <div class="sq-card-header">
+                  <div class="sq-header-left flex items-center gap-2">
+                    <span class="sq-badge">Question {{ idx + 1 }}</span>
+                    <span :class="['sq-type-badge', q.type === 'MCQ' ? 'sq-type-mcq' : (q.type === 'SHORT_QUESTION' ? 'sq-type-short' : 'sq-type-code')]">
+                      {{ q.type === 'CODING_QUESTION' ? 'Coding Problem' : (q.type === 'SHORT_QUESTION' ? 'Short Answer' : 'Multiple Choice') }}
+                    </span>
+                    <span v-if="q.programmingLanguage" class="sq-lang-tag">{{ q.programmingLanguage }}</span>
+                  </div>
+                  <div class="sq-header-right">
+                    <span class="sq-marks-pill">{{ q.marks || 10 }} Marks</span>
+                  </div>
+                </div>
+
+                <!-- Prompt -->
+                <div class="sq-prompt">{{ q.question || q.title }}</div>
+
+                <!-- MCQ Student View -->
+                <div v-if="q.type === 'MCQ' || (!q.type && q.options)" class="sq-mcq-options-container">
+                  <label
+                    v-for="(opt, optIdx) in (q.options || [])"
+                    :key="optIdx"
+                    :class="[
+                      'sq-mcq-option-label',
+                      simulatedStudentAnswers[idx] === opt ? 'sq-option-selected' : '',
+                      showTeacherGradingOverlay && (opt === q.correctAnswer || opt === q.answer) ? 'sq-option-correct-key' : ''
+                    ]"
+                  >
+                    <input
+                      type="radio"
+                      :name="`dash_preview_q_${idx}`"
+                      :value="opt"
+                      v-model="simulatedStudentAnswers[idx]"
+                      class="sq-radio-input"
+                    />
+                    <span class="sq-opt-letter">{{ ['A','B','C','D','E','F'][optIdx] || (optIdx+1) }}</span>
+                    <span class="sq-opt-text">{{ opt }}</span>
+                    <span v-if="showTeacherGradingOverlay && (opt === q.correctAnswer || opt === q.answer)" class="sq-key-badge">
+                      ✓ Correct Key
+                    </span>
+                  </label>
+
+                  <div v-if="showTeacherGradingOverlay && q.explanation" class="teacher-key-explanation-box">
+                    <div class="t-key-title">💡 Educator Explanation:</div>
+                    <p class="t-key-text">{{ q.explanation }}</p>
+                  </div>
+                </div>
+
+                <!-- Short Question Student View -->
+                <div v-if="q.type === 'SHORT_QUESTION'" class="sq-short-container">
+                  <div class="sq-input-label">Candidate Answer:</div>
+                  <textarea
+                    v-model="simulatedStudentAnswers[idx]"
+                    class="sq-textarea"
+                    rows="4"
+                    placeholder="Type your response here..."
+                  ></textarea>
+
+                  <div v-if="showTeacherGradingOverlay" class="teacher-short-overlay-box">
+                    <div v-if="q.modelAnswer" class="t-overlay-section">
+                      <span class="t-overlay-label">📖 Model Answer:</span>
+                      <div class="t-overlay-body">{{ q.modelAnswer }}</div>
+                    </div>
+                    <div v-if="q.rubric" class="t-overlay-section">
+                      <span class="t-overlay-label">📋 Grading Rubric:</span>
+                      <div class="t-overlay-body t-rubric-body">{{ q.rubric }}</div>
+                    </div>
+                    <div v-if="q.explanation" class="t-overlay-section">
+                      <span class="t-overlay-label">💡 Explanatory Notes:</span>
+                      <div class="t-overlay-body italic">{{ q.explanation }}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Coding Question Student View -->
+                <div v-if="q.type === 'CODING_QUESTION'" class="sq-code-container">
+                  <div v-if="q.starterCode" class="sq-starter-wrap">
+                    <div class="sq-code-bar">
+                      <span>Starter Code ({{ q.programmingLanguage || 'Template' }})</span>
+                    </div>
+                    <pre class="sq-code-pre"><code>{{ q.starterCode }}</code></pre>
+                  </div>
+
+                  <div v-if="q.sampleInput || q.sampleOutput" class="sq-sample-io-grid">
+                    <div v-if="q.sampleInput" class="sq-io-box">
+                      <span class="sq-io-label">Sample Input</span>
+                      <pre class="sq-io-code">{{ q.sampleInput }}</pre>
+                    </div>
+                    <div v-if="q.sampleOutput" class="sq-io-box">
+                      <span class="sq-io-label">Sample Output</span>
+                      <pre class="sq-io-code">{{ q.sampleOutput }}</pre>
+                    </div>
+                  </div>
+
+                  <div class="sq-student-code-input">
+                    <div class="sq-code-bar">
+                      <span>Your {{ q.programmingLanguage || 'Code' }} Implementation:</span>
+                    </div>
+                    <textarea
+                      v-model="simulatedStudentAnswers[idx]"
+                      class="sq-code-textarea"
+                      rows="6"
+                      :placeholder="`Write your ${q.programmingLanguage || 'code'} solution here...`"
+                    ></textarea>
+                  </div>
+
+                  <div v-if="showTeacherGradingOverlay" class="teacher-code-overlay-box">
+                    <div v-if="q.rubric" class="t-overlay-section">
+                      <span class="t-overlay-label">📋 Code Evaluation Rubric:</span>
+                      <div class="t-overlay-body t-rubric-body">{{ q.rubric }}</div>
+                    </div>
+                    <div v-if="q.solutionCode" class="t-overlay-section">
+                      <span class="t-overlay-label">✓ Answer Key (Reference Solution):</span>
+                      <pre class="sq-solution-pre"><code>{{ q.solutionCode }}</code></pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="student-preview-footer">
+              <span class="footer-note">ℹ️ Simulated Student mode. No actual student record or grade is recorded.</span>
+              <button type="button" class="btn btn-secondary" @click="closeStudentPreview">
+                Exit Student Preview
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================= -->
+        <!-- MODAL 4B: RENAME ASSESSMENT TITLE MODAL                       -->
+        <!-- ============================================================= -->
+        <div v-if="showRenameAssessmentModal && renamingAssessmentItem" class="modal-overlay" @click.self="showRenameAssessmentModal = false">
+          <div class="modal-card modal-sm">
+            <div class="modal-header">
+              <div class="modal-title-wrap">
+                <h3 class="modal-title">Rename Assessment</h3>
+                <p class="modal-subtitle">Update title for Assessment #{{ renamingAssessmentItem.assessment_id }}</p>
+              </div>
+              <button class="modal-close-btn" @click="showRenameAssessmentModal = false">&times;</button>
+            </div>
+            <div class="modal-body p-4">
+              <div v-if="renameAssessmentError" class="alert alert-danger mb-3">{{ renameAssessmentError }}</div>
+              <div class="form-group">
+                <label class="form-label font-bold text-sm">Assessment Title <span class="text-danger">*</span></label>
+                <input
+                  type="text"
+                  v-model="renameAssessmentTitleInput"
+                  class="input-control mt-1"
+                  placeholder="Enter assessment title..."
+                  @keyup.enter="handleSaveRenamedAssessment"
+                />
+                <span class="text-xs text-muted mt-1 block">Title can be edited later before or after publishing.</span>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" @click="showRenameAssessmentModal = false">Cancel</button>
+              <button
+                type="button"
+                class="btn btn-primary"
+                :disabled="isRenamingAssessment || !renameAssessmentTitleInput.trim()"
+                @click="handleSaveRenamedAssessment"
+              >
+                {{ isRenamingAssessment ? 'Saving Title...' : 'Save New Title' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================= -->
+        <!-- MODAL 4C: DELETE WARNING MODAL (ATTEMPTS EXIST)               -->
+        <!-- ============================================================= -->
+        <div v-if="showDeleteWarningModal && deletingAssessmentItem" class="modal-overlay" @click.self="showDeleteWarningModal = false">
+          <div class="modal-card modal-danger-card">
+            <div class="modal-header modal-danger-header">
+              <div class="flex items-center gap-2">
+                <span class="warning-large-icon text-2xl">⚠️</span>
+                <div class="modal-title-wrap">
+                  <h3 class="modal-title text-danger">Warning: Student Attempts Exist!</h3>
+                  <p class="modal-subtitle text-danger-sub">Assessment #{{ deletingAssessmentItem.assessment_id }}: {{ deletingAssessmentItem.title }}</p>
+                </div>
+              </div>
+              <button class="modal-close-btn" @click="showDeleteWarningModal = false">&times;</button>
+            </div>
+            <div class="modal-body p-4">
+              <div class="danger-callout-box">
+                <p class="font-bold text-red-800 mb-1">
+                  ⚠️ This assessment currently has {{ warningAttemptsCount }} active student submission(s) / attempt record(s).
+                </p>
+                <p class="text-xs text-red-700">
+                  Permanently deleting this assessment will erase all student test results, marks, recorded answers, and academic audit trails from the institutional registry.
+                </p>
+              </div>
+
+              <div class="mt-3">
+                <label class="danger-confirm-checkbox flex items-start gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="confirmForceDeleteCheckbox" class="mt-1" />
+                  <span class="text-xs font-semibold text-gray-800">
+                    I understand that student records exist, and I confirm permanent deletion of this assessment and all {{ warningAttemptsCount }} student submission(s).
+                  </span>
+                </label>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" @click="showDeleteWarningModal = false">Cancel (Keep Assessment)</button>
+              <button
+                type="button"
+                class="btn btn-danger"
+                :disabled="!confirmForceDeleteCheckbox || isDeletingAssessment"
+                @click="executeDashboardDelete(deletingAssessmentItem.assessment_id, true)"
+              >
+                {{ isDeletingAssessment ? 'Deleting All Records...' : 'Permanently Delete Assessment & Records' }}
+              </button>
             </div>
           </div>
         </div>
@@ -3208,6 +4499,23 @@ onMounted(async () => {
               <button class="modal-close-btn" @click="showSingleStudentModal = false">&times;</button>
             </div>
             <form @submit.prevent="handleEnrollSingleStudent" class="modal-body">
+              <!-- Target Course Selector if multiple courses exist -->
+              <div v-if="teacherCourses.length > 1" class="field-item mb-3">
+                <label class="field-label">Target Course *</label>
+                <select
+                  class="select-control font-semibold text-sm"
+                  :value="selectedCourseHub?.course_id"
+                  @change="(e) => {
+                    const c = teacherCourses.find(item => item.course_id === parseInt(e.target.value, 10));
+                    if (c) { selectedCourseHub = c; loadCourseHubData(c.course_id); }
+                  }"
+                >
+                  <option v-for="c in teacherCourses" :key="c.course_id" :value="c.course_id">
+                    {{ c.course_name }} ({{ c.course_code || 'CRS' }})
+                  </option>
+                </select>
+              </div>
+
               <div class="field-item mb-3">
                 <label class="field-label">Student Full Name *</label>
                 <input
@@ -3242,8 +4550,27 @@ onMounted(async () => {
                 </div>
               </div>
 
+              <!-- Duplicate Warning Alert -->
+              <div v-if="singleDuplicateWarning" class="alert alert-danger mb-3">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="alert-icon">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" y1="8" x2="12" y2="12"/>
+                  <line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                <div class="text-xs">
+                  <strong>⚠️ Duplicate Detected:</strong> {{ singleDuplicateWarning }}
+                </div>
+              </div>
+
+              <!-- Backend / Submission Error Message -->
+              <div v-if="singleEnrollError && !singleDuplicateWarning" class="alert alert-danger mb-3">
+                <div class="text-xs">
+                  <strong>❌ Enrollment Error:</strong> {{ singleEnrollError }}
+                </div>
+              </div>
+
               <!-- Domain Warning Alert -->
-              <div v-if="singleDomainWarning" class="alert alert-warning mb-3">
+              <div v-if="singleDomainWarning && !singleDuplicateWarning" class="alert alert-warning mb-3">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="alert-icon">
                   <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
                   <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
@@ -3258,7 +4585,7 @@ onMounted(async () => {
               </p>
 
               <div class="modal-footer mt-4">
-                <button type="submit" class="btn btn-primary" :disabled="isEnrollingSingle">
+                <button type="submit" class="btn btn-primary" :disabled="Boolean(singleDuplicateWarning) || isEnrollingSingle">
                   <span v-if="isEnrollingSingle">Enrolling Student...</span>
                   <span v-else>Enroll Student</span>
                 </button>
@@ -3283,6 +4610,23 @@ onMounted(async () => {
               <button class="modal-close-btn" @click="showBulkStudentModal = false">&times;</button>
             </div>
             <div class="modal-body">
+              <!-- Target Course Selector if multiple courses exist -->
+              <div v-if="teacherCourses.length > 1" class="field-item mb-3">
+                <label class="field-label">Target Course *</label>
+                <select
+                  class="select-control font-semibold text-sm"
+                  :value="selectedCourseHub?.course_id"
+                  @change="(e) => {
+                    const c = teacherCourses.find(item => item.course_id === parseInt(e.target.value, 10));
+                    if (c) { selectedCourseHub = c; loadCourseHubData(c.course_id); }
+                  }"
+                >
+                  <option v-for="c in teacherCourses" :key="c.course_id" :value="c.course_id">
+                    {{ c.course_name }} ({{ c.course_code || 'CRS' }})
+                  </option>
+                </select>
+              </div>
+
               <!-- Mode Tabs -->
               <div class="flex gap-2 mb-3">
                 <button
@@ -3331,6 +4675,26 @@ onMounted(async () => {
                   @change="handleCSVFileUpload"
                   class="text-xs"
                 />
+              </div>
+
+              <!-- Duplicate Notice on Page -->
+              <div v-if="bulkDuplicatesCount > 0" class="alert alert-warning mt-3">
+                <div class="text-xs">
+                  <strong>⚠️ Duplicate Email Notice:</strong> {{ bulkDuplicatesCount }} duplicate student email(s) detected and skipped.
+                  <div v-if="bulkDuplicatesList.length > 0" class="mt-1 font-mono text-xs">
+                    Skipped: {{ bulkDuplicatesList.slice(0, 6).join(', ') }}{{ bulkDuplicatesList.length > 6 ? ` and ${bulkDuplicatesList.length - 6} more` : '' }}
+                  </div>
+                  <div class="text-muted mt-1 text-xs">
+                    (These students are already enrolled in this course or repeated in the uploaded file).
+                  </div>
+                </div>
+              </div>
+
+              <!-- Bulk Enrollment Error Notice -->
+              <div v-if="bulkEnrollError" class="alert alert-danger mt-3">
+                <div class="text-xs font-semibold">
+                  ❌ {{ bulkEnrollError }}
+                </div>
               </div>
 
               <!-- Validation & Parsing Summary -->
@@ -6114,9 +7478,9 @@ svg {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 1rem 2rem;
-  margin: 1rem 1.5rem 0;
-  border-radius: var(--radius-md);
+  padding: 0.85rem 1.5rem;
+  margin: 0.75rem 1.5rem 0;
+  border-radius: var(--radius-lg);
   background: #ffffff;
   border: 1px solid var(--border-sky);
   box-shadow: 0 2px 10px rgba(135, 206, 235, 0.12);
@@ -6181,11 +7545,11 @@ svg {
 /* Dashboard content area */
 .dashboard-content {
   flex: 1;
-  padding: 1.5rem;
+  padding: 1.25rem 1.5rem;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: 1rem;
 }
 
 /* Toast Notification */
@@ -6292,57 +7656,67 @@ svg {
 }
 
 .role-view {
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 1.75rem;
+  gap: 1rem;
+}
+
+.tab-content-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
 }
 
 /* Banner Card */
 .banner-card {
-  padding: 2.25rem 2.5rem;
+  padding: 1.25rem 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.5rem;
   background: var(--bg-card);
   border: 1px solid var(--border-sky);
-  border-left: 4px solid var(--accent-primary);
+  border-left: 5px solid var(--accent-primary);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
 }
 
 .banner-title {
   font-family: var(--font-heading);
-  font-size: 1.65rem;
+  font-size: 1.75rem;
   font-weight: 800;
   color: var(--text-main);
+  line-height: 1.25;
 }
 
 .banner-text {
-  font-size: 0.95rem;
+  font-size: 0.98rem;
   color: var(--text-secondary);
-  max-width: 800px;
-  line-height: 1.6;
+  max-width: 850px;
+  line-height: 1.65;
 }
 
 /* Sub-Navigation Tabs */
 .admin-tabs {
   display: flex;
-  gap: 0.65rem;
+  gap: 0.85rem;
   border-bottom: 1px solid var(--border-sky);
-  padding-bottom: 0.75rem;
+  padding-bottom: 1rem;
+  margin-bottom: 1rem;
   overflow-x: auto;
 }
 
 .admin-tab-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.6rem;
   background: #FFFFFF;
   color: var(--text-main);
   border: 1px solid var(--border-sky);
-  font-size: 0.88rem;
+  font-size: 0.9rem;
   font-weight: 600;
-  padding: 0.65rem 1.15rem;
+  padding: 0.75rem 1.35rem;
   border-radius: var(--radius-md);
   white-space: nowrap;
   box-shadow: var(--shadow-sm);
@@ -6565,22 +7939,26 @@ svg {
 .dashboard-overview-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
-  gap: 1.5rem;
+  gap: 1rem;
 }
 
 .overview-card {
-  padding: 1.5rem;
+  padding: 1.25rem 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.75rem;
   background: #ffffff;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-sky);
+  box-shadow: var(--shadow-sm);
 }
 
 .overview-card-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding-bottom: 0.85rem;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.25rem;
   border-bottom: 1px solid var(--border-sky);
 }
 
@@ -6683,42 +8061,46 @@ svg {
 .grid-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 1.25rem;
+  gap: 1rem;
 }
 
 .stat-card {
-  padding: 1.5rem;
+  padding: 1.25rem 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
   background: var(--bg-card);
   border: 1px solid var(--border-sky);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   cursor: pointer;
-  transition: transform 0.15s ease, border-color 0.15s ease;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .stat-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-3px);
   border-color: var(--border-focus);
+  box-shadow: 0 10px 24px rgba(56, 189, 248, 0.15);
 }
 
 .stat-number {
-  font-size: 2.25rem;
+  font-size: 2.35rem;
   font-weight: 800;
   color: var(--accent-deep);
+  line-height: 1.1;
+  margin-bottom: 0.2rem;
 }
 
 .stat-label {
-  font-size: 0.92rem;
-  font-weight: 600;
+  font-size: 0.98rem;
+  font-weight: 700;
   color: var(--text-main);
 }
 
 .stat-hint {
-  font-size: 0.8rem;
+  font-size: 0.84rem;
   color: var(--text-secondary);
+  line-height: 1.45;
 }
 
 .text-amber {
@@ -6867,16 +8249,16 @@ svg {
 .data-table th {
   background: #f8fafc;
   color: var(--text-secondary);
-  font-weight: 600;
-  padding: 0.85rem 1.25rem;
+  font-weight: 700;
+  padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border-sky);
   text-transform: uppercase;
-  font-size: 0.74rem;
+  font-size: 0.76rem;
   letter-spacing: 0.05em;
 }
 
 .data-table td {
-  padding: 0.95rem 1.25rem;
+  padding: 0.85rem 1rem;
   border-bottom: 1px solid #f1f5f9;
   vertical-align: middle;
 }
@@ -6982,10 +8364,10 @@ svg {
 
 /* Creator & Form Cards */
 .creator-card {
-  padding: 2.25rem 2.5rem;
+  padding: 1.25rem 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 0.75rem;
   background: var(--bg-card);
   border: 1px solid var(--border-sky);
   border-radius: var(--radius-lg);
@@ -7306,12 +8688,24 @@ svg {
   background: #10b981;
 }
 
-.badge-error {
+.badge-error,
+.badge-danger {
   background: #fee2e2;
   color: #991b1b;
+  border: 1px solid #fecaca;
 }
-.badge-error .badge-dot {
+.badge-error .badge-dot,
+.badge-danger .badge-dot {
   background: #ef4444;
+}
+
+.badge-purple {
+  background: #f3e8ff;
+  color: #7e22ce;
+  border: 1px solid #e9d5ff;
+}
+.badge-purple .badge-dot {
+  background: #a855f7;
 }
 
 .btn {
@@ -7427,17 +8821,18 @@ svg {
 }
 
 .alert {
-  padding: 0.9rem 1.25rem;
-  border-radius: var(--radius-md);
-  font-size: 0.9rem;
+  padding: 1.25rem 1.65rem;
+  border-radius: var(--radius-lg);
+  font-size: 0.92rem;
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: 1rem;
+  margin-bottom: 1rem;
 }
 
 .alert-icon {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
 }
 
@@ -7445,6 +8840,12 @@ svg {
   background: #d1fae5;
   color: #065f46;
   border: 1px solid #a7f3d0;
+}
+
+.alert-warning {
+  background: #fefce8;
+  color: #854d0e;
+  border: 1px solid #fef08a;
 }
 
 .alert-error {
@@ -7538,30 +8939,40 @@ svg {
 .assigned-courses-section {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1rem;
 }
 
 .section-top-row {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
 }
 
 .course-card {
-  padding: 1.75rem;
+  padding: 1.25rem;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
   background: var(--bg-card);
   border: 1px solid var(--border-sky);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.course-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(56, 189, 248, 0.12);
 }
 
 .course-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 0.25rem;
 }
 
 .course-badge {
@@ -7569,27 +8980,28 @@ svg {
   background: var(--bg-hover);
   color: var(--accent-deep);
   border: 1px solid var(--border-sky);
-  padding: 0.2rem 0.6rem;
-  border-radius: 4px;
-  font-size: 0.8rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
   font-weight: 700;
 }
 
 .student-count {
-  font-size: 0.82rem;
+  font-size: 0.85rem;
   color: var(--accent-deep);
   font-weight: 600;
 }
 
 .course-name {
   font-family: var(--font-heading);
-  font-size: 1.15rem;
+  font-size: 1.25rem;
   font-weight: 700;
   color: var(--text-main);
+  line-height: 1.35;
 }
 
 .course-meta {
-  font-size: 0.82rem;
+  font-size: 0.86rem;
   color: var(--text-secondary);
 }
 
@@ -7598,6 +9010,89 @@ svg {
   flex-direction: column;
   gap: 0.5rem;
   margin-top: 0.5rem;
+}
+
+/* Teacher Quick Actions Strip */
+.teacher-quick-strip {
+  padding: 1rem 1.25rem;
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-sky);
+}
+
+.quick-strip-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.quick-strip-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0;
+}
+
+.quick-strip-sub {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.quick-strip-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.quick-strip-actions .btn {
+  padding: 0.6rem 1.25rem;
+  font-size: 0.88rem;
+}
+
+/* Teacher Roster Selector */
+.teacher-roster-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: #ffffff;
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-lg);
+  margin-bottom: 1rem;
+  box-shadow: var(--shadow-sm);
+  flex-wrap: wrap;
+}
+
+.teacher-roster-label {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-main);
+  white-space: nowrap;
+}
+
+.teacher-roster-select {
+  flex: 1;
+  min-width: 280px;
+  padding: 0.65rem 1rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+  border: 1px solid #cbd5e1;
+  border-radius: var(--radius-md);
+  background: #f8fafc;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.teacher-roster-select:focus {
+  border-color: var(--accent-vivid);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.12);
 }
 
 /* ─── Active Students & Utility Colors ─── */
@@ -7657,10 +9152,6 @@ svg {
 .btn-success-outline:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.role-view {
-  width: 100%;
 }
 
 /* ─── Departments & Courses Management Styles ─── */
@@ -8018,11 +9509,12 @@ svg {
 .course-hub-nav-bar {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 1.25rem;
+  margin-bottom: 1rem;
 }
 
 .course-hub-breadcrumb {
-  font-size: 0.85rem;
+  font-size: 0.88rem;
   color: var(--text-secondary);
 }
 
@@ -8030,22 +9522,24 @@ svg {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1.5rem;
+  gap: 1rem;
   flex-wrap: wrap;
-  padding: 1.5rem;
+  padding: 1.25rem 1.5rem;
+  border-radius: var(--radius-lg);
+  margin-bottom: 1rem;
 }
 
 .course-hub-title {
-  font-size: 1.5rem;
-  font-weight: 700;
+  font-size: 1.6rem;
+  font-weight: 800;
   color: var(--text-primary);
   display: flex;
   align-items: center;
 }
 
 .course-hub-desc {
-  font-size: 0.85rem;
-  margin-top: 0.25rem;
+  font-size: 0.88rem;
+  margin-top: 0.35rem;
 }
 
 .course-hub-header-stats {
@@ -8058,22 +9552,23 @@ svg {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0.5rem 1rem;
-  background: rgba(255, 255, 255, 0.6);
+  padding: 0.85rem 1.35rem;
+  background: rgba(255, 255, 255, 0.7);
   border: 1px solid var(--border-light);
-  border-radius: 8px;
-  min-width: 90px;
+  border-radius: 12px;
+  min-width: 110px;
+  gap: 0.35rem;
 }
 
 .hub-stat-val {
-  font-size: 1.4rem;
+  font-size: 1.5rem;
   font-weight: 800;
   line-height: 1.1;
 }
 
 .hub-stat-lbl {
-  font-size: 0.72rem;
-  font-weight: 600;
+  font-size: 0.74rem;
+  font-weight: 700;
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -8081,13 +9576,24 @@ svg {
 }
 
 .course-hub-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
   animation: fadeIn 0.2s ease;
 }
 
 .roster-status-strip {
   background: #ffffff;
   border: 1px solid var(--border-light);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  box-shadow: var(--shadow-sm);
 }
 
 .badge-mini-danger {
@@ -8113,18 +9619,20 @@ svg {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 1.25rem;
   flex-wrap: wrap;
+  margin-bottom: 1rem;
 }
 
 .search-input-wrap {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.65rem;
   background: #ffffff;
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
+  border: 1px solid var(--border-sky);
+  border-radius: var(--radius-md);
+  padding: 0.35rem 0.5rem;
   overflow: hidden;
   transition: all 0.2s ease;
 }
@@ -8135,10 +9643,10 @@ svg {
 }
 
 .search-icon {
-  width: 15px !important;
-  height: 15px !important;
-  min-width: 15px !important;
-  min-height: 15px !important;
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
   color: var(--text-secondary, #64748b) !important;
   margin-left: 0.75rem;
   margin-right: 0.25rem;
@@ -8146,8 +9654,8 @@ svg {
 }
 
 .search-input-wrap .search-input {
-  padding: 0.45rem 0.5rem;
-  font-size: 0.86rem;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.92rem;
   border: none;
   outline: none;
   background: transparent;
@@ -8166,6 +9674,305 @@ svg {
 
 .clear-search-btn:hover {
   color: var(--text-primary);
+}
+
+/* ===================================================
+   ASSESSMENTS DASHBOARD TAB: CLEAN DESIGN SYSTEM
+   =================================================== */
+
+/* Status Segmented Tabs */
+.assessment-status-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem;
+  background: #f1f5f9;
+  border-radius: 12px;
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+}
+
+.status-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.95rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: #475569;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.status-tab-btn:hover {
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.status-tab-btn.active {
+  background: #ffffff;
+  color: #0284c7;
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.status-count-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.12);
+  color: #475569;
+}
+
+.status-tab-btn.active .status-count-badge {
+  background: #e0f2fe;
+  color: #0284c7;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.dot-published { background: #10b981; }
+.dot-draft { background: #f59e0b; }
+.dot-saved { background: #0284c7; }
+.dot-closed { background: #ef4444; }
+.dot-archived { background: #a855f7; }
+
+/* Filter Controls Toolbar */
+.assessment-filter-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1.25rem;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  flex-wrap: wrap;
+}
+
+.search-control-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 260px;
+}
+
+.search-icon-svg {
+  position: absolute;
+  left: 0.85rem;
+  width: 16px;
+  height: 16px;
+  color: #94a3b8;
+  pointer-events: none;
+}
+
+.toolbar-search-input {
+  width: 100%;
+  padding: 0.55rem 2rem 0.55rem 2.4rem;
+  font-size: 0.88rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.toolbar-search-input:focus {
+  background: #ffffff;
+  border-color: #0284c7;
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
+}
+
+.select-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.select-filter-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.toolbar-select {
+  padding: 0.52rem 0.85rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.toolbar-select:focus {
+  border-color: #0284c7;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
+}
+
+.btn-reset-filters {
+  background: transparent;
+  border: none;
+  color: #0284c7;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.35rem 0.6rem;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.btn-reset-filters:hover {
+  background: #e0f2fe;
+}
+
+.toolbar-results-count {
+  font-size: 0.82rem;
+  color: #64748b;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+/* Table Row Actions & Popover */
+.table-actions-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  white-space: nowrap;
+  position: relative;
+}
+
+.action-btn-pill {
+  padding: 0.42rem 0.85rem !important;
+  font-size: 0.82rem !important;
+  border-radius: 8px !important;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  transition: all 0.15s ease;
+}
+
+.action-more-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border-sky);
+  background: #ffffff;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.action-more-btn:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+.action-dropdown-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 1050;
+  width: 220px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
+  padding: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  animation: popoverFadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  text-align: left;
+}
+
+@keyframes popoverFadeIn {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.dropdown-item {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: #334155;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.dropdown-item:hover {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.dropdown-item.text-danger {
+  color: #dc2626 !important;
+}
+
+.dropdown-item.text-danger:hover {
+  background: #fef2f2;
+  color: #b91c1c !important;
+}
+
+.dropdown-item.text-amber {
+  color: #d97706 !important;
+}
+
+.dropdown-item.text-amber:hover {
+  background: #fffbeb;
+}
+
+.dropdown-item.text-primary {
+  color: #0284c7 !important;
+}
+
+.dropdown-item.text-primary:hover {
+  background: #f0f9ff;
+}
+
+.dropdown-item-icon {
+  font-size: 0.95rem;
+  width: 18px;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.dropdown-divider {
+  height: 1px;
+  background: #f1f5f9;
+  margin: 0.35rem 0;
+  border: none;
 }
 
 .decision-option-card {

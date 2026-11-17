@@ -1310,8 +1310,22 @@ const handleExport = async (format) => {
     }
 
     if (res?.data) {
-      triggerDownload(res.data.content, res.data.fileName, res.data.mimeType, res.data.isBase64);
-      exportSuccess.value = `✅ "${res.data.fileName}" generated and downloaded to your device!`;
+      if (res.data.content) {
+        triggerDownload(res.data.content, res.data.fileName, res.data.mimeType, res.data.isBase64);
+        const isZip = res.data.isZip || res.data.fileName?.endsWith('.zip');
+        if (isZip) {
+          exportSuccess.value = `✅ "${res.data.fileName}" generated and downloaded! (ZIP contains 2 PDFs: Questions & Answer Key)`;
+        } else {
+          exportSuccess.value = `✅ "${res.data.fileName}" generated and downloaded to your device!`;
+        }
+      } else if (res.data.files && Array.isArray(res.data.files) && res.data.files.length > 1) {
+        res.data.files.forEach((fileItem, idx) => {
+          setTimeout(() => {
+            triggerDownload(fileItem.content, fileItem.fileName, fileItem.mimeType, fileItem.isBase64);
+          }, idx * 400);
+        });
+        exportSuccess.value = `✅ 2 PDFs generated & downloaded: Question Paper and Official Answer Key!`;
+      }
       if (currentId) {
         await loadExportHistory();
       }

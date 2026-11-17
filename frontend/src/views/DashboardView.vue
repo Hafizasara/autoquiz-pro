@@ -1314,33 +1314,56 @@ const handleLogout = async () => {
   router.push('/login');
 };
 
-// Load Teacher Assigned Courses & Complete Overview (for Educator role)
+// Helper to apply teacher data
+const applyTeacherOverviewData = (data) => {
+  if (!data) return;
+  teacherCourses.value = data.courses || [];
+  teacherDrafts.value = data.drafts || [];
+  teacherSaved.value = data.saved || [];
+  teacherPublished.value = data.published || [];
+  teacherClosed.value = data.closed || [];
+  teacherArchived.value = data.archived || [];
+  teacherAllAssessments.value = data.allAssessments || [
+    ...(data.published || []),
+    ...(data.drafts || []),
+    ...(data.saved || []),
+    ...(data.closed || []),
+    ...(data.archived || [])
+  ];
+  teacherReviewQueue.value = data.reviewQueue || [];
+  teacherFlaggedCount.value = data.flaggedCount || 0;
+  teacherExports.value = data.recentExports || [];
+  teacherAiFailures.value = data.recentAiFailures || [];
+  teacherDepartments.value = data.departments || [];
+  if (data.stats) {
+    educatorDashboardStats.value = data.stats;
+  }
+};
+
+// Load Teacher Assigned Courses & Complete Overview (with instant cache hydration)
 const loadTeacherData = async () => {
-  teacherLoading.value = true;
+  // 1. Instant cache hydration for immediate render (0ms perceived wait)
+  try {
+    const cached = sessionStorage.getItem('autoquiz_teacher_overview');
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      applyTeacherOverviewData(parsed);
+      teacherLoading.value = false;
+    } else {
+      teacherLoading.value = true;
+    }
+  } catch (e) {
+    teacherLoading.value = true;
+  }
+
+  // 2. Fetch fresh data in background
   try {
     const res = await fetchTeacherOverview(auth.token.value);
     const data = res.data || {};
-    teacherCourses.value = data.courses || [];
-    teacherDrafts.value = data.drafts || [];
-    teacherSaved.value = data.saved || [];
-    teacherPublished.value = data.published || [];
-    teacherClosed.value = data.closed || [];
-    teacherArchived.value = data.archived || [];
-    teacherAllAssessments.value = data.allAssessments || [
-      ...(data.published || []),
-      ...(data.drafts || []),
-      ...(data.saved || []),
-      ...(data.closed || []),
-      ...(data.archived || [])
-    ];
-    teacherReviewQueue.value = data.reviewQueue || [];
-    teacherFlaggedCount.value = data.flaggedCount || 0;
-    teacherExports.value = data.recentExports || [];
-    teacherAiFailures.value = data.recentAiFailures || [];
-    teacherDepartments.value = data.departments || [];
-    if (data.stats) {
-      educatorDashboardStats.value = data.stats;
-    }
+    applyTeacherOverviewData(data);
+    try {
+      sessionStorage.setItem('autoquiz_teacher_overview', JSON.stringify(data));
+    } catch (e) {}
   } catch (err) {
     console.warn('Error fetching teacher overview, falling back to courses:', err);
     try {
@@ -1692,27 +1715,41 @@ const handleGenerateExport = async () => {
       }
     }
 
-    if (res?.data?.content) {
-      // Trigger binary / base64 or text download
-      const isBase64 = res.data.isBase64 || false;
+    const triggerBinaryDownload = (content, fileName, mimeType, isBase64 = false) => {
       let blob;
       if (isBase64) {
-        const binStr = atob(res.data.content);
+        const binStr = atob(content);
         const bytes = new Uint8Array(binStr.length);
         for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
-        blob = new Blob([bytes], { type: res.data.mimeType });
+        blob = new Blob([bytes], { type: mimeType || 'application/octet-stream' });
       } else {
-        blob = new Blob([res.data.content], { type: res.data.mimeType });
+        blob = new Blob([content], { type: mimeType || 'text/plain;charset=utf-8' });
       }
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = res.data.fileName || `${exportForm.value.assessmentTitle.toLowerCase().replace(/[^a-z0-9]/g, '-')}.${format.toLowerCase()}`;
+      link.download = fileName;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
-      triggerCopyToast(`✅ "${res.data.fileName}" downloaded successfully!`);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    };
+
+    if (res?.data?.content) {
+      triggerBinaryDownload(res.data.content, res.data.fileName, res.data.mimeType, res.data.isBase64);
+      const isZip = res.data.isZip || res.data.fileName?.endsWith('.zip');
+      if (isZip) {
+        triggerCopyToast(`✅ "${res.data.fileName}" downloaded (ZIP contains 2 PDFs: Questions & Answer Key)!`);
+      } else {
+        triggerCopyToast(`✅ "${res.data.fileName}" downloaded successfully!`);
+      }
+    } else if (res?.data?.files && Array.isArray(res.data.files) && res.data.files.length > 1) {
+      res.data.files.forEach((fileItem, idx) => {
+        setTimeout(() => {
+          triggerBinaryDownload(fileItem.content, fileItem.fileName, fileItem.mimeType, fileItem.isBase64);
+        }, idx * 400);
+      });
+      triggerCopyToast(`✅ 2 PDFs downloaded: Question Paper and Official Answer Key!`);
     } else {
       // Fallback
       const apiRes = await createQuizExport(token, exportForm.value);

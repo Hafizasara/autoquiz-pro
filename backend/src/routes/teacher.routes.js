@@ -34,69 +34,58 @@ router.get('/overview', async (req, res, next) => {
     const uniId = req.user.university_id || 1;
     const client = supabaseAdmin || supabase;
 
-    // 1. Fetch Teacher Courses
-    let courses = [];
-    try {
-      courses = await getTeacherAssignedCourses(userId, uniId);
-      // If none assigned directly, also check courses in this university where user_id matches
-      if (courses.length === 0 && client) {
-        const { data: cData } = await client
-          .from('courses')
-          .select('course_id, course_name, course_code, department_id, created_at, status')
-          .or(`user_id.eq.${userId},university_id.eq.${uniId}`);
-        courses = (cData || []).map(c => ({
-          ...c,
-          student_count: 0
-        }));
-      }
-    } catch (cErr) {
-      console.warn('Error loading teacher courses:', cErr.message);
-    }
-
-    // 2. Fetch Assessments (Drafts, Saved, Published, Closed, Archived)
-    let drafts = [];
-    let published = [];
-    let saved = [];
-    let closed = [];
-    let archived = [];
-    let allAssessments = [];
-    try {
-      if (client) {
+    // Run all 3 data fetches in parallel for maximum speed
+    const [coursesResult, assessmentsResult, departmentsResult] = await Promise.allSettled([
+      // 1. Fetch Teacher Courses
+      (async () => {
+        let courses = await getTeacherAssignedCourses(userId, uniId);
+        if (courses.length === 0 && client) {
+          const { data: cData } = await client
+            .from('courses')
+            .select('course_id, course_name, course_code, department_id, created_at, status')
+            .or(`user_id.eq.${userId},university_id.eq.${uniId}`);
+          courses = (cData || []).map(c => ({ ...c, student_count: 0 }));
+        }
+        return courses;
+      })(),
+      // 2. Fetch Assessments
+      (async () => {
+        if (!client) return [];
         const { data: asmts } = await client
           .from('assessments')
           .select('*, courses(course_name, course_code)')
           .order('created_at', { ascending: false });
-
-        allAssessments = (asmts || []).map(a => ({
+        return (asmts || []).map(a => ({
           ...a,
           course_name: a.courses?.course_name || a.course_name,
           course_code: a.courses?.course_code || a.course_code || 'CRS',
           status: (a.status || 'DRAFT').toUpperCase()
         }));
-
-        drafts = allAssessments.filter(a => a.status === 'DRAFT');
-        saved = allAssessments.filter(a => a.status === 'SAVED');
-        published = allAssessments.filter(a => a.status === 'PUBLISHED' || a.status === 'ACTIVE');
-        closed = allAssessments.filter(a => a.status === 'CLOSED');
-        archived = allAssessments.filter(a => a.status === 'ARCHIVED');
-      }
-    } catch (aErr) {
-      console.warn('Error loading assessments:', aErr.message);
-    }
-
-    // 3. Departments for "+ New Course" shortcut selection
-    let departments = [];
-    try {
-      if (client) {
+      })(),
+      // 3. Departments
+      (async () => {
+        if (!client) return [];
         const { data: deptData } = await client
           .from('departments')
           .select('department_id, name, code, status')
           .eq('status', 'active');
-        departments = deptData || [];
-      }
-    } catch (dErr) {
-      console.warn('Error loading departments:', dErr.message);
-    }
+        return deptData || [];
+      })()
+    ]);
+
+    const courses = coursesResult.status === 'fulfilled' ? coursesResult.value : [];
+    const allAssessments = assessmentsResult.status === 'fulfilled' ? assessmentsResult.value : [];
+    const departments = departmentsResult.status === 'fulfilled' ? departmentsResult.value : [];
+
+    if (coursesResult.status === 'rejected') console.warn('Error loading teacher courses:', coursesResult.reason?.message);
+    if (assessmentsResult.status === 'rejected') console.warn('Error loading assessments:', assessmentsResult.reason?.message);
+    if (departmentsResult.status === 'rejected') console.warn('Error loading departments:', departmentsResult.reason?.message);
+
+    const drafts = allAssessments.filter(a => a.status === 'DRAFT');
+    const saved = allAssessments.filter(a => a.status === 'SAVED');
+    const published = allAssessments.filter(a => a.status === 'PUBLISHED' || a.status === 'ACTIVE');
+    const closed = allAssessments.filter(a => a.status === 'CLOSED');
+    const archived = allAssessments.filter(a => a.status === 'ARCHIVED');
 
     // 4. Calculate Attempts waiting review & flagged count
     const waitingReviewAttempts = teacherReviewAttempts.filter(a => a.status === 'WAITING_REVIEW');

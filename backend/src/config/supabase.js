@@ -14,8 +14,8 @@ const databaseUrl = process.env.DATABASE_URL;
 export const isSupabaseConfigured = Boolean(supabaseUrl && (supabaseAnonKey || supabaseServiceRoleKey));
 export const isDatabaseUrlConfigured = Boolean(databaseUrl);
 
-// Custom fetch with a 4-second timeout so Supabase calls fail fast when the project is unreachable
-const SUPABASE_FETCH_TIMEOUT_MS = 4000;
+// Custom fetch with a 10-second timeout so Supabase calls fail fast when the project is unreachable
+const SUPABASE_FETCH_TIMEOUT_MS = 10000;
 const fetchWithTimeout = (url, options = {}) => {
   const controller = new AbortController();
   if (options.signal) {

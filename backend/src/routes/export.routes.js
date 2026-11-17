@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import PDFDocument from 'pdfkit';
+import archiver from 'archiver';
 import { supabaseAdmin, supabase } from '../config/supabase.js';
 import { requireAuth } from '../middleware/auth.middleware.js';
 
@@ -416,9 +417,9 @@ function safeFileName(base, ext) {
 }
 
 // ---------------------------------------------------------------------------
-// Generator: PDF Document
+// Generator 1: Examination Questions PDF (No Answers - For Students)
 // ---------------------------------------------------------------------------
-function generateAssessmentPdf(assessment, includeAnswerKey) {
+function generateAssessmentQuestionsPdf(assessment) {
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({ margin: 50, size: 'A4' });
@@ -518,33 +519,105 @@ function generateAssessmentPdf(assessment, includeAnswerKey) {
         doc.moveDown(0.2);
       });
 
-      // Answer Key Section
-      if (includeAnswerKey) {
-        doc.addPage();
-        doc.rect(50, 45, 495, 3).fill('#059669');
-        doc.moveDown(0.5);
-        doc.fontSize(16).font('Helvetica-Bold').fillColor('#059669').text('CONFIDENTIAL: OFFICIAL ANSWER KEY', { align: 'center' });
-        doc.fontSize(10).font('Helvetica').fillColor('#64748B').text(`Assessment: ${title}`, { align: 'center' });
-        doc.moveDown(1);
-
-        questions.forEach((q, idx) => {
-          if (doc.y > 700) {
-            doc.addPage();
-          }
-
-          const qNum = idx + 1;
-          const answer = q.correct_answer || q.correctAnswer || q.model_answer || q.modelAnswer || q.solution_code || q.solutionCode || 'N/A';
-          const explanation = q.explanation || q.rubric || '';
-
-          doc.fontSize(10).font('Helvetica-Bold').fillColor('#1E293B').text(`Q${qNum} Answer: `, { continued: true });
-          doc.font('Helvetica').fillColor('#059669').text(`${answer}`);
-
-          if (explanation) {
-            doc.fontSize(9).font('Helvetica-Oblique').fillColor('#475569').text(`Rationale / Rubric: ${explanation}`);
-          }
-          doc.moveDown(0.5);
-        });
+      // Page Footers
+      const range = doc.bufferedPageRange();
+      for (let i = range.start; i < range.start + range.count; i++) {
+        doc.switchToPage(i);
+        doc.fontSize(8).font('Helvetica').fillColor('#94A3B8');
+        doc.text(
+          `AutoQuiz Pro • Examination Paper • Page ${i + 1} of ${range.count} • ${new Date().toLocaleDateString()}`,
+          50,
+          780,
+          { align: 'center', width: 495 }
+        );
       }
+
+      doc.end();
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Generator 2: Official Answer Key PDF (Confidential - For Evaluators)
+// ---------------------------------------------------------------------------
+function generateAssessmentAnswerKeyPdf(assessment) {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ margin: 50, size: 'A4' });
+      const chunks = [];
+
+      doc.on('data', chunk => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', err => reject(err));
+
+      const title = assessment.title || 'Examination Assessment';
+      const course = assessment.course_name || assessment.course_code || `Course ID: ${assessment.course_id || 'General'}`;
+      const totalMarks = assessment.total_marks || 0;
+      const questions = Array.isArray(assessment.questions) ? assessment.questions : [];
+
+      // Top decorative bar (Emerald Green)
+      doc.rect(50, 45, 495, 4).fill('#059669');
+      doc.moveDown(0.5);
+
+      // Title & Course
+      doc.fillColor('#059669').fontSize(18).font('Helvetica-Bold').text('CONFIDENTIAL ANSWER KEY & SOLUTIONS', { align: 'center' });
+      doc.fontSize(11).font('Helvetica-Bold').fillColor('#1E293B').text(`Assessment: ${title}`, { align: 'center' });
+      doc.fontSize(9.5).font('Helvetica').fillColor('#64748B').text(`Course: ${course} • Total Questions: ${questions.length} • Total Marks: ${totalMarks}`, { align: 'center' });
+      
+      doc.moveDown(0.6);
+
+      // Warning / Confidentiality Box
+      const alertY = doc.y;
+      doc.rect(50, alertY, 495, 24).fill('#ECFDF5');
+      doc.rect(50, alertY, 495, 24).stroke('#A7F3D0');
+      doc.fillColor('#065F46').fontSize(8.5).font('Helvetica-Bold');
+      doc.text('FACULTY & EVALUATOR COPY: Strictly confidential. Keep secure from students.', 65, alertY + 7);
+
+      doc.y = alertY + 34;
+      doc.moveDown(0.5);
+
+      // Section Header
+      doc.fontSize(12).font('Helvetica-Bold').fillColor('#1E293B').text('DETAILED SOLUTIONS & SCORING RUBRICS', 50, doc.y);
+      doc.rect(50, doc.y + 2, 495, 1).fill('#E2E8F0');
+      doc.moveDown(0.8);
+
+      questions.forEach((q, idx) => {
+        if (doc.y > 680) {
+          doc.addPage();
+        }
+
+        const qNum = idx + 1;
+        const qText = q.question_text || q.text || q.question || '';
+        const marks = q.marks ?? q.points ?? 1;
+        const bloom = (q.bloom_level || q.bloomLevel || '').toUpperCase();
+        const answer = q.correct_answer || q.correctAnswer || q.model_answer || q.modelAnswer || q.solution_code || q.solutionCode || 'N/A';
+        const explanation = q.explanation || q.rubric || '';
+
+        // Question Title Row
+        doc.fontSize(10).font('Helvetica-Bold').fillColor('#1E293B');
+        const badgeText = bloom ? ` [${bloom}]` : '';
+        doc.text(`Q${qNum}. ${qText} (${marks} pt${marks > 1 ? 's' : ''})${badgeText}`);
+        doc.moveDown(0.2);
+
+        // Correct Answer Box
+        const ansY = doc.y;
+        doc.rect(60, ansY, 485, 22).fill('#F0FDF4');
+        doc.rect(60, ansY, 485, 22).stroke('#BBF7D0');
+        doc.fontSize(9.5).font('Helvetica-Bold').fillColor('#166534');
+        doc.text(`✓ Correct Answer: ${answer}`, 70, ansY + 6);
+        doc.y = ansY + 28;
+
+        // Rationale / Explanation
+        if (explanation) {
+          doc.fontSize(9).font('Helvetica-Oblique').fillColor('#475569');
+          doc.text(`Rationale / Rubric: ${explanation}`, 65);
+          doc.moveDown(0.3);
+        }
+
+        doc.moveDown(0.4);
+      });
 
       // Page Footers
       const range = doc.bufferedPageRange();
@@ -552,7 +625,7 @@ function generateAssessmentPdf(assessment, includeAnswerKey) {
         doc.switchToPage(i);
         doc.fontSize(8).font('Helvetica').fillColor('#94A3B8');
         doc.text(
-          `AutoQuiz Pro • Page ${i + 1} of ${range.count} • ${new Date().toLocaleDateString()}`,
+          `AutoQuiz Pro • Confidential Answer Key • Page ${i + 1} of ${range.count} • ${new Date().toLocaleDateString()}`,
           50,
           780,
           { align: 'center', width: 495 }
@@ -612,43 +685,94 @@ router.post('/:assessmentId/google-doc', requireAuth, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Helper: Create ZIP archive from in-memory file buffers
+// ---------------------------------------------------------------------------
+function createZipArchive(files = []) {
+  return new Promise((resolve, reject) => {
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    const chunks = [];
+
+    archive.on('data', chunk => chunks.push(chunk));
+    archive.on('end', () => resolve(Buffer.concat(chunks)));
+    archive.on('error', err => reject(err));
+
+    files.forEach(f => {
+      archive.append(f.buffer, { name: f.name });
+    });
+
+    archive.finalize();
+  });
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/v1/exports/:assessmentId/pdf
+// Generates 2 separate PDFs (Questions Paper + Official Answer Key)
+// and bundles them together into 1 clean ZIP file for instant download.
 // ---------------------------------------------------------------------------
 router.post('/:assessmentId/pdf', requireAuth, async (req, res) => {
   try {
     const { assessmentId } = req.params;
-    const includeAnswerKey = req.body?.includeAnswerKey === true || req.body?.includeAnswerKey === 'true';
 
     const assessment = await fetchAssessment(assessmentId, req.body?.assessment);
     if (!assessment) {
       return res.status(404).json({ status: 'fail', message: 'Assessment not found.' });
     }
 
-    const pdfBuffer = await generateAssessmentPdf(assessment, includeAnswerKey);
-    const suffix = includeAnswerKey ? '_with_answers' : '';
-    const fileName = safeFileName(assessment.title || 'assessment', `${suffix}.pdf`);
+    // 1. Generate Question Paper PDF (Strictly questions only, no answers)
+    const questionsPdfBuffer = await generateAssessmentQuestionsPdf(assessment);
+    const questionsFileName = safeFileName(assessment.title || 'assessment', '_Questions.pdf');
+
+    // 2. Generate Separate Answer Key PDF (Confidential solutions & rubric)
+    const answerKeyPdfBuffer = await generateAssessmentAnswerKeyPdf(assessment);
+    const answerKeyFileName = safeFileName(assessment.title || 'assessment', '_Answer_Key.pdf');
+
+    // 3. Bundle both PDFs into a single ZIP file
+    const zipFiles = [
+      { name: questionsFileName, buffer: questionsPdfBuffer },
+      { name: answerKeyFileName, buffer: answerKeyPdfBuffer }
+    ];
+    const zipBuffer = await createZipArchive(zipFiles);
+    const zipFileName = safeFileName(assessment.title || 'assessment', '_PDF_Package.zip');
 
     const record = await recordExport({
       assessmentId,
       teacherId: req.user?.user_id,
       format: 'PDF',
-      includeAnswerKey,
-      fileName,
+      includeAnswerKey: true,
+      fileName: zipFileName,
       assessmentTitle: assessment.title,
       questionCount: (assessment.questions || []).length,
-      meta: { includeAnswerKey }
+      meta: {
+        files: [questionsFileName, answerKeyFileName],
+        type: 'zip_with_both_pdfs'
+      }
     });
 
     return res.json({
       status: 'success',
       data: {
-        content: pdfBuffer.toString('base64'),
+        content: zipBuffer.toString('base64'),
         isBase64: true,
-        fileName,
-        mimeType: 'application/pdf',
+        fileName: zipFileName,
+        mimeType: 'application/zip',
+        format: 'PDF',
+        isZip: true,
+        files: [
+          {
+            fileName: questionsFileName,
+            content: questionsPdfBuffer.toString('base64'),
+            mimeType: 'application/pdf',
+            isBase64: true
+          },
+          {
+            fileName: answerKeyFileName,
+            content: answerKeyPdfBuffer.toString('base64'),
+            mimeType: 'application/pdf',
+            isBase64: true
+          }
+        ],
         exportId: record?.export_id || null,
-        exportedAt: record?.exported_at || new Date().toISOString(),
-        format: 'PDF'
+        exportedAt: record?.exported_at || new Date().toISOString()
       }
     });
   } catch (err) {

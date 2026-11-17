@@ -33,19 +33,34 @@ const request = async (endpoint, options = {}) => {
     ...(options.headers || {})
   };
 
-  const response = await fetch(url, {
-    ...options,
-    headers
-  });
+  // 15-second timeout to avoid indefinite hangs (Render cold start can take 30s+)
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs || 15000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  const data = await response.json().catch(() => ({}));
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers,
+      signal: controller.signal
+    });
 
-  if (!response.ok) {
-    const errorMsg = data.message || `Request failed with status ${response.status}`;
-    throw new Error(errorMsg);
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const errorMsg = data.message || `Request failed with status ${response.status}`;
+      throw new Error(errorMsg);
+    }
+
+    return data;
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error('Request timed out. The server may be starting up — please try again in a few seconds.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return data;
 };
 
 // --- UNIFIED AUTHENTICATION API ---

@@ -48,7 +48,7 @@ router.get('/stats', async (req, res, next) => {
   try {
     const uniId = req.user.university_id || 1;
 
-    const [usersRes, inviteRes, courseRes, deptRes, assessRes] = await Promise.all([
+    const [usersRes, inviteRes, courseRes, deptRes, assessRes, growthRes] = await Promise.all([
       query(
         `SELECT
           COUNT(*) FILTER (WHERE role = 'ADMIN')::int as admin_count,
@@ -85,22 +85,20 @@ router.get('/stats', async (req, res, next) => {
       query(
         `SELECT COUNT(*)::int as total_assessments FROM public.courses WHERE (university_id = $1 OR university_id IS NULL)`,
         [uniId]
-      ).catch(() => ({ rows: [{ total_assessments: 0 }] }))
+      ).catch(() => ({ rows: [{ total_assessments: 0 }] })),
+      query(
+        `SELECT 
+          DATE(created_at) as date,
+          COUNT(*) FILTER (WHERE role = 'TEACHER')::int as teachers,
+          COUNT(*) FILTER (WHERE role = 'STUDENT')::int as students,
+          COUNT(*)::int as total
+         FROM public.users
+         WHERE (university_id = $1 OR university_id IS NULL) AND created_at >= NOW() - INTERVAL '30 days'
+         GROUP BY DATE(created_at)
+         ORDER BY DATE(created_at)`,
+        [uniId]
+      ).catch(() => ({ rows: [] }))
     ]);
-
-    // Growth data (last 30 days)
-    const growthRes = await query(
-      `SELECT 
-        DATE(created_at) as date,
-        COUNT(*) FILTER (WHERE role = 'TEACHER')::int as teachers,
-        COUNT(*) FILTER (WHERE role = 'STUDENT')::int as students,
-        COUNT(*)::int as total
-       FROM public.users
-       WHERE (university_id = $1 OR university_id IS NULL) AND created_at >= NOW() - INTERVAL '30 days'
-       GROUP BY DATE(created_at)
-       ORDER BY DATE(created_at)`,
-      [uniId]
-    );
 
     res.status(200).json({
       status: 'success',

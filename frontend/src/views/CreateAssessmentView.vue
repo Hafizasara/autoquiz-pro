@@ -1310,11 +1310,18 @@ const handleExport = async (format) => {
     }
 
     if (res?.data) {
-      if (res.data.content) {
+      if (format === 'PDF' && res.data.files && Array.isArray(res.data.files) && res.data.files.length > 1) {
+        res.data.files.forEach((fileItem, idx) => {
+          setTimeout(() => {
+            triggerDownload(fileItem.content, fileItem.fileName, fileItem.mimeType, fileItem.isBase64);
+          }, idx * 450);
+        });
+        exportSuccess.value = `✅ 2 PDFs generated & downloaded: Question Paper and Official Answer Key!`;
+      } else if (res.data.content) {
         triggerDownload(res.data.content, res.data.fileName, res.data.mimeType, res.data.isBase64);
         const isZip = res.data.isZip || res.data.fileName?.endsWith('.zip');
         if (isZip) {
-          exportSuccess.value = `✅ "${res.data.fileName}" generated and downloaded! (ZIP contains 2 PDFs: Questions & Answer Key)`;
+          exportSuccess.value = `✅ "${res.data.fileName}" generated and downloaded! (Contains 2 PDFs: Questions & Answer Key)`;
         } else {
           exportSuccess.value = `✅ "${res.data.fileName}" generated and downloaded to your device!`;
         }
@@ -1322,7 +1329,7 @@ const handleExport = async (format) => {
         res.data.files.forEach((fileItem, idx) => {
           setTimeout(() => {
             triggerDownload(fileItem.content, fileItem.fileName, fileItem.mimeType, fileItem.isBase64);
-          }, idx * 400);
+          }, idx * 450);
         });
         exportSuccess.value = `✅ 2 PDFs generated & downloaded: Question Paper and Official Answer Key!`;
       }
